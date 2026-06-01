@@ -9,6 +9,26 @@ SRE_TYPE_UAT = "DEMO/MBE UAT Patch"
 
 SRE_TYPES: tuple[str, ...] = (SRE_TYPE_WEEKLY, SRE_TYPE_URGENT, SRE_TYPE_UAT)
 
+# Repos listed in the form but omitted entirely from generated SRE tickets.
+EXCLUDED_FROM_SRE_REPOS: frozenset[str] = frozenset(
+    {
+        "fcsky-common-lib",
+        "fcsky-service-library",
+    }
+)
+
+# Integration stage uploads (separate section; not MSA or direct sync).
+INTEGRATION_STAGE_REPOS: frozenset[str] = frozenset(
+    {
+        "integration-auth-service",
+        "integration-api-gateway",
+        "integration-config-service",
+        "integration-mgmt-admin",
+        "integration-registry-service",
+        "interim-data-replication-system",
+    }
+)
+
 # Repos that always go under Direct Sync (after shorthand normalization).
 DIRECT_SYNC_REPOS: frozenset[str] = frozenset(
     {
@@ -35,10 +55,17 @@ SHORTHAND_MAPPING: dict[str, str] = {
     "fcsky-i18n": "fcsky-internationalization",
     "fcsky-internationalization": "fcsky-internationalization",
     "internationalization": "fcsky-internationalization",
+    "common-lib": "fcsky-common-lib",
+    "fcsky-common-lib": "fcsky-common-lib",
+    "service-lib": "fcsky-service-library",
+    "service-library": "fcsky-service-library",
+    "fcsky-service-library": "fcsky-service-library",
+    "fcsky-service-lib": "fcsky-service-library",
     "common": "fcsky-common-service",
     "audit": "fcsky-audit-service",
     "task": "fcsky-task-service",
     "tenant-config": "fcsky-tenant-config",
+    "integration-auth": "integration-auth-service",
     "auth": "integration-auth-service",
 }
 

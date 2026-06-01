@@ -68,8 +68,28 @@ def _render_tenant_queries(section_label: str, prefix: str, *, placeholder: str)
     ]
 
 
-def _render_query_sections(sre_type: str) -> tuple[list[str], list[TenantQuery], list[str], list[TenantQuery]]:
+def _render_mysql_backup_options() -> tuple[bool, str]:
+    st.markdown("**MySQL backup tables**")
+    backup_required = st.checkbox(
+        "Include backup table line for MySQL queries",
+        key="sre_mysql_backup_required",
+        help='Adds a line like: Backup Table: SUMMARY_DISPLAY FEATURE_CONFIGURATION',
+    )
+    backup_tables = ""
+    if backup_required:
+        backup_tables = st.text_input(
+            "Backup table names (space or comma separated)",
+            key="sre_mysql_backup_tables",
+            placeholder="SUMMARY_DISPLAY FEATURE_CONFIGURATION",
+        )
+    return backup_required, backup_tables.strip()
+
+
+def _render_query_sections(
+    sre_type: str,
+) -> tuple[list[str], list[TenantQuery], list[str], list[TenantQuery], bool, str]:
     st.subheader("Queries (optional)")
+    mysql_backup_required, mysql_backup_tables = _render_mysql_backup_options()
 
     if sre_type == config.SRE_TYPE_UAT:
         all_mysql_label = "MySQL — all DEMO/MBE UAT tenants"
@@ -102,7 +122,7 @@ def _render_query_sections(sre_type: str) -> tuple[list[str], list[TenantQuery],
         "psql_tenant",
         placeholder="UPDATE ...",
     )
-    return mysql_all, mysql_specific, psql_all, psql_specific
+    return mysql_all, mysql_specific, psql_all, psql_specific, mysql_backup_required, mysql_backup_tables
 
 
 def render() -> None:
@@ -195,7 +215,14 @@ def render() -> None:
             height=100,
         )
 
-    mysql_all, mysql_specific, psql_all, psql_specific = _render_query_sections(sre_type)
+    (
+        mysql_all,
+        mysql_specific,
+        psql_all,
+        psql_specific,
+        mysql_backup_required,
+        mysql_backup_tables,
+    ) = _render_query_sections(sre_type)
 
     if st.button("Generate SRE ticket", type="primary", key="sre_generate"):
         if not date_display.strip():
@@ -224,6 +251,8 @@ def render() -> None:
             msa_image_tags=parse_image_tags(msa_tags_text),
             mysql_queries_all=mysql_all,
             mysql_queries_specific=mysql_specific,
+            mysql_backup_required=mysql_backup_required,
+            mysql_backup_tables=mysql_backup_tables,
             psql_queries_all=psql_all,
             psql_queries_specific=psql_specific,
         )

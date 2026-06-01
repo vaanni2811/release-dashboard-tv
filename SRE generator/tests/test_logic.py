@@ -14,6 +14,7 @@ from logic import (
     format_full_ticket,
     generate_ticket,
     normalize_repo_name,
+    parse_backup_table_names,
     parse_repo_lines,
 )
 
@@ -50,6 +51,102 @@ class TestShorthand(unittest.TestCase):
         self.assertEqual(normalize_repo_name("fcsky-cc"), "fcsky-commandcenter-service")
         self.assertEqual(normalize_repo_name("cc"), "fcsky-commandcenter-service")
 
+    def test_excluded_repo_shorthands(self) -> None:
+        self.assertEqual(normalize_repo_name("common-lib"), "fcsky-common-lib")
+        self.assertEqual(normalize_repo_name("service-lib"), "fcsky-service-library")
+        self.assertEqual(normalize_repo_name("service-library"), "fcsky-service-library")
+
+
+class TestIntegrationStage(unittest.TestCase):
+    def test_integration_auth_shorthand(self) -> None:
+        self.assertEqual(normalize_repo_name("integration-auth"), "integration-auth-service")
+
+    def test_integration_section_after_direct_sync_production(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_WEEKLY,
+            date_display="May/30, 2026",
+            repo_lines=[
+                "fcsky-ui",
+                "integration-auth",
+                "unit-listing-service",
+            ],
+            hotfix_branch="hotfix_r26q2.15",
+            msa_image_tags={"integration-auth-service": "3.2.1"},
+        )
+        ticket = generate_ticket(data)
+        self.assertNotIn("integration-auth-service", ticket.description.split("MSA images")[1].split("Direct sync")[0])
+        direct_idx = ticket.description.index("Direct sync")
+        integration_idx = ticket.description.index("Integration stage")
+        self.assertLess(direct_idx, integration_idx)
+        self.assertIn(
+            "Kindly upload the image(s) below from Integration stage (prod branch) to all Production clusters:",
+            ticket.description,
+        )
+        self.assertIn("integration-auth-service:3.2.1", ticket.description)
+        self.assertNotIn("unit-listing-service", ticket.description.split("Integration stage")[1].split("Note:")[0])
+
+    def test_integration_section_uat_destination(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_UAT,
+            date_display="May/30, 2026",
+            repo_lines=["integration-api-gateway"],
+        )
+        ticket = generate_ticket(data)
+        self.assertIn(
+            "Kindly upload the image(s) below from Integration stage (prod branch) to DEMO-UAT and MBE-UAT:",
+            ticket.description,
+        )
+        self.assertIn("integration-api-gateway:", ticket.description)
+
+    def test_interim_data_replication_not_msa(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_URGENT,
+            date_display="May/30, 2026",
+            repo_lines=["interim-data-replication-system", "unit-listing-service"],
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("interim-data-replication-system:", ticket.description)
+        self.assertIn("Integration stage", ticket.description)
+
+
+class TestExcludedRepos(unittest.TestCase):
+    def test_excluded_repos_omitted_from_ticket(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_WEEKLY,
+            date_display="May/30, 2026",
+            repo_lines=[
+                "fcsky",
+                "fcsky-common-lib",
+                "common-lib",
+                "fcsky-service-library",
+                "service-lib",
+                "unit-listing-service",
+            ],
+            hotfix_branch="hotfix_r26q2.15",
+            msa_image_tags={
+                "fcsky-common-lib": "1.0.0",
+                "unit-listing-service": "2.0.1",
+            },
+        )
+        ticket = generate_ticket(data)
+        self.assertNotIn("fcsky-common-lib", ticket.description)
+        self.assertNotIn("fcsky-service-library", ticket.description)
+        self.assertNotIn("common-lib", ticket.description)
+        self.assertNotIn("service-lib", ticket.description)
+        self.assertIn("unit-listing-service:2.0.1", ticket.description)
+
+    def test_excluded_only_does_not_add_empty_msa_section(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_WEEKLY,
+            date_display="May/30, 2026",
+            repo_lines=["common-lib", "service-library"],
+            hotfix_branch="hotfix_r26q2.15",
+        )
+        ticket = generate_ticket(data)
+        self.assertNotIn("MSA images", ticket.description)
+        self.assertNotIn("Direct sync", ticket.description)
+        self.assertNotIn("RPM from HP-APP", ticket.description)
+
 
 class TestClassification(unittest.TestCase):
     def test_fcsky_is_rpm_only(self) -> None:
@@ -65,10 +162,16 @@ class TestClassification(unittest.TestCase):
 
         self.assertEqual(classify_repo("foo-serverless"), RepoBucket.DIRECT_SYNC)
 
-    def test_integration_prefix(self) -> None:
+    def test_integration_stage_repos(self) -> None:
         from logic import RepoBucket
 
-        self.assertEqual(classify_repo("integration-auth-service"), RepoBucket.INTEGRATION)
+        for repo in config.INTEGRATION_STAGE_REPOS:
+            self.assertEqual(classify_repo(repo), RepoBucket.INTEGRATION)
+
+    def test_unknown_integration_prefix_is_msa(self) -> None:
+        from logic import RepoBucket
+
+        self.assertEqual(classify_repo("integration-unknown-service"), RepoBucket.MSA)
 
     def test_example_repos(self) -> None:
         lines = [
@@ -216,8 +319,13 @@ class TestDefaults(unittest.TestCase):
             psql_queries_specific=[TenantQuery("clientB", "UPDATE b;")],
         )
         ticket = generate_ticket(data)
-        self.assertEqual(ticket.description.count("Kindly execute below MYSQL queries on all Production tenants:"), 2)
-        self.assertIn("Kindly execute below MYSQL queries ONLY on clientA:", ticket.description)
+        self.assertEqual(
+            ticket.description.count(
+                "Kindly execute the below Mysql queries on all Production clusters:"
+            ),
+            2,
+        )
+        self.assertIn("Kindly execute the below Mysql queries ONLY on clientA:", ticket.description)
         self.assertIn("UPDATE a;", ticket.description)
         self.assertIn("Kindly execute below PSQL queries ONLY on clientB:", ticket.description)
 
@@ -230,8 +338,37 @@ class TestDefaults(unittest.TestCase):
             psql_queries_all=["SELECT 2;"],
         )
         ticket = generate_ticket(data)
-        self.assertIn("Kindly execute below MYSQL queries on all DEMO/MBE UAT tenants:", ticket.description)
+        self.assertIn(
+            "Kindly execute the below Mysql queries on all DEMO-UAT and MBE-UAT clusters:",
+            ticket.description,
+        )
         self.assertIn("Kindly execute below PSQL queries on all DEMO/MBE UAT tenants:", ticket.description)
+
+    def test_mysql_backup_table_line(self) -> None:
+        queries = (
+            "INSERT INTO SUMMARY_DISPLAY(DISPLAY_NAME) VALUES ('x');\n\n"
+            "DELETE FROM FEATURE_CONFIGURATION WHERE FEATURE_NAME='x';"
+        )
+        data = SREInput(
+            sre_type=config.SRE_TYPE_UAT,
+            date_display="May/30, 2026",
+            repo_lines=["fcsky"],
+            mysql_queries_all=[queries],
+            mysql_backup_required=True,
+            mysql_backup_tables="SUMMARY_DISPLAY, FEATURE_CONFIGURATION",
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("Backup Table: SUMMARY_DISPLAY FEATURE_CONFIGURATION", ticket.description)
+        self.assertLess(
+            ticket.description.index("Backup Table:"),
+            ticket.description.index("INSERT INTO SUMMARY_DISPLAY"),
+        )
+
+    def test_parse_backup_table_names(self) -> None:
+        self.assertEqual(
+            parse_backup_table_names("SUMMARY_DISPLAY, FEATURE_CONFIGURATION"),
+            ("SUMMARY_DISPLAY", "FEATURE_CONFIGURATION"),
+        )
 
 
 class TestFormat(unittest.TestCase):

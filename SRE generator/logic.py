@@ -54,6 +54,8 @@ class SREInput:
     msa_image_tags: dict[str, str] = field(default_factory=dict)
     mysql_queries_all: list[str] = field(default_factory=list)
     mysql_queries_specific: list[TenantQuery] = field(default_factory=list)
+    mysql_backup_required: bool = False
+    mysql_backup_tables: str = ""
     psql_queries_all: list[str] = field(default_factory=list)
     psql_queries_specific: list[TenantQuery] = field(default_factory=list)
 
@@ -71,6 +73,11 @@ def normalize_repo_name(raw: str) -> str:
         return ""
     key = name.lower()
     return config.SHORTHAND_MAPPING.get(key, name)
+
+
+def is_excluded_repo(name: str) -> bool:
+    """True if this repo must not appear anywhere in generated SRE output."""
+    return name in config.EXCLUDED_FROM_SRE_REPOS
 
 
 def _strip_direct_sync_marker(raw: str) -> tuple[str, bool]:
@@ -99,7 +106,7 @@ def parse_repo_lines(lines: list[str]) -> list[tuple[str, bool]]:
                 continue
             raw, explicit = _strip_direct_sync_marker(part)
             normalized = normalize_repo_name(raw)
-            if normalized:
+            if normalized and not is_excluded_repo(normalized):
                 entries.append((normalized, explicit))
     return entries
 
@@ -114,11 +121,11 @@ def parse_image_tags(text: str) -> dict[str, str]:
         if ":" in line:
             repo_part, tag_part = line.split(":", 1)
             repo = normalize_repo_name(repo_part.strip())
-            if repo:
+            if repo and not is_excluded_repo(repo):
                 tags[repo] = tag_part.strip()
         else:
             repo = normalize_repo_name(line)
-            if repo:
+            if repo and not is_excluded_repo(repo):
                 tags[repo] = ""
     return tags
 
@@ -126,10 +133,10 @@ def parse_image_tags(text: str) -> dict[str, str]:
 def classify_repo(name: str, explicit_direct_sync: bool = False) -> RepoBucket:
     if name == config.FCSKY_REPO:
         return RepoBucket.RPM
+    if name in config.INTEGRATION_STAGE_REPOS:
+        return RepoBucket.INTEGRATION
     if explicit_direct_sync or name in config.DIRECT_SYNC_REPOS or name.endswith("-serverless"):
         return RepoBucket.DIRECT_SYNC
-    if name.startswith("integration-"):
-        return RepoBucket.INTEGRATION
     return RepoBucket.MSA
 
 
@@ -197,23 +204,50 @@ def _section(header: str, body_lines: list[str]) -> str | None:
     return header + "\n\n" + "\n".join(body_lines)
 
 
-def _queries_block(header: str, queries: str) -> str | None:
-    text = queries.strip()
+def _queries_block(header: str, body: str) -> str | None:
+    text = body.strip()
     if not text or text.lower() in {"none", "n/a", "-"}:
         return None
     return header + "\n\n" + text
 
 
+def parse_backup_table_names(raw: str) -> tuple[str, ...]:
+    """Parse space-, comma-, or newline-separated backup table names."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[\s,]+", raw.strip()):
+        part = part.strip()
+        if not part or part.lower() in {"none", "n/a", "-"}:
+            continue
+        if part not in seen:
+            seen.add(part)
+            names.append(part)
+    return tuple(names)
+
+
+def _mysql_query_body(queries: str, data: SREInput) -> str:
+    """Queries text with optional backup-table line prepended."""
+    query_text = queries.strip()
+    if not query_text:
+        return ""
+
+    parts: list[str] = []
+    if data.mysql_backup_required:
+        tables = parse_backup_table_names(data.mysql_backup_tables)
+        if tables:
+            parts.append(f"Backup Table: {' '.join(tables)}")
+    parts.append(query_text)
+    return "\n\n".join(parts)
+
+
 def _mysql_all_header(sre_type: str) -> str:
     if sre_type == config.SRE_TYPE_UAT:
-        return "Kindly execute below MYSQL queries on all DEMO/MBE UAT tenants:"
-    return "Kindly execute below MYSQL queries on all Production tenants:"
+        return "Kindly execute the below Mysql queries on all DEMO-UAT and MBE-UAT clusters:"
+    return "Kindly execute the below Mysql queries on all Production clusters:"
 
 
 def _mysql_specific_header(sre_type: str, tenant: str) -> str:
-    if sre_type == config.SRE_TYPE_UAT:
-        return f"Kindly execute below MYSQL queries ONLY on {tenant}:"
-    return f"Kindly execute below MYSQL queries ONLY on {tenant}:"
+    return f"Kindly execute the below Mysql queries ONLY on {tenant}:"
 
 
 def _psql_all_header(sre_type: str) -> str:
@@ -231,7 +265,8 @@ def _psql_specific_header(sre_type: str, tenant: str) -> str:
 def _append_query_sections(parts: list[str], data: SREInput) -> None:
     mysql_all_hdr = _mysql_all_header(data.sre_type)
     for queries in data.mysql_queries_all:
-        block = _queries_block(mysql_all_hdr, queries)
+        body = _mysql_query_body(queries, data)
+        block = _queries_block(mysql_all_hdr, body)
         if block:
             parts.extend([block, ""])
 
@@ -239,7 +274,8 @@ def _append_query_sections(parts: list[str], data: SREInput) -> None:
         tenant = entry.tenant.strip()
         if not tenant:
             continue
-        block = _queries_block(_mysql_specific_header(data.sre_type, tenant), entry.queries)
+        body = _mysql_query_body(entry.queries, data)
+        block = _queries_block(_mysql_specific_header(data.sre_type, tenant), body)
         if block:
             parts.extend([block, ""])
 
@@ -282,6 +318,47 @@ def _append_flush_note(parts: list[str], flush: bool, *, uat: bool = False) -> N
         parts.append(f"{label}: Kindly flush msa cache.")
 
 
+def _integration_stage_header(sre_type: str) -> str:
+    if sre_type == config.SRE_TYPE_UAT:
+        destination = "DEMO-UAT and MBE-UAT"
+    else:
+        destination = "all Production clusters"
+    return (
+        f"Kindly upload the image(s) below from Integration stage (prod branch) to {destination}:"
+    )
+
+
+def _append_direct_sync_production(
+    parts: list[str], data: SREInput, classified: ClassifiedRepos
+) -> None:
+    if classified.direct_sync and data.hotfix_branch.strip():
+        block = _section(
+            f"Direct sync from {data.hotfix_branch.strip()} branch:",
+            list(classified.direct_sync),
+        )
+        if block:
+            parts.extend([block, ""])
+
+
+def _append_direct_sync_uat(parts: list[str], data: SREInput, classified: ClassifiedRepos) -> None:
+    branch = (data.uat_branch or config.DEFAULT_UAT_BRANCH).strip()
+    if classified.direct_sync:
+        block = _section(f"Direct sync from {branch} branch:", list(classified.direct_sync))
+        if block:
+            parts.extend([block, ""])
+
+
+def _append_integration_stage_section(
+    parts: list[str], data: SREInput, classified: ClassifiedRepos
+) -> None:
+    if not classified.integration:
+        return
+    lines = _format_image_lines(classified.integration, data.msa_image_tags)
+    block = _section(_integration_stage_header(data.sre_type), lines)
+    if block:
+        parts.extend([block, ""])
+
+
 def _generate_weekly(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
     title = f"Upload weekly patches to Production | {data.date_display.strip()}"
     parts: list[str] = []
@@ -305,21 +382,8 @@ def _generate_weekly(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
     if block:
         parts.extend([block, ""])
 
-    integration_lines = _format_image_lines(classified.integration, data.msa_image_tags)
-    block = _section(
-        "Kindly upload the below image from integration stage (prod branch) to production:",
-        integration_lines,
-    )
-    if block:
-        parts.extend([block, ""])
-
-    if classified.direct_sync and data.hotfix_branch.strip():
-        block = _section(
-            f"Direct sync from {data.hotfix_branch.strip()} branch:",
-            list(classified.direct_sync),
-        )
-        if block:
-            parts.extend([block, ""])
+    _append_direct_sync_production(parts, data, classified)
+    _append_integration_stage_section(parts, data, classified)
 
     _append_query_sections(parts, data)
 
@@ -348,21 +412,8 @@ def _generate_urgent(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
     if block:
         parts.extend([block, ""])
 
-    integration_lines = _format_image_lines(classified.integration, data.msa_image_tags)
-    block = _section(
-        "Kindly upload the below image from integration stage (prod branch) to production:",
-        integration_lines,
-    )
-    if block:
-        parts.extend([block, ""])
-
-    if classified.direct_sync and data.hotfix_branch.strip():
-        block = _section(
-            f"Direct sync from {data.hotfix_branch.strip()} branch:",
-            list(classified.direct_sync),
-        )
-        if block:
-            parts.extend([block, ""])
+    _append_direct_sync_production(parts, data, classified)
+    _append_integration_stage_section(parts, data, classified)
 
     _append_query_sections(parts, data)
 
@@ -393,11 +444,8 @@ def _generate_uat(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
     if block:
         parts.extend([block, ""])
 
-    branch = (data.uat_branch or config.DEFAULT_UAT_BRANCH).strip()
-    if classified.direct_sync:
-        block = _section(f"Direct sync from {branch} branch:", list(classified.direct_sync))
-        if block:
-            parts.extend([block, ""])
+    _append_direct_sync_uat(parts, data, classified)
+    _append_integration_stage_section(parts, data, classified)
 
     _append_query_sections(parts, data)
 
