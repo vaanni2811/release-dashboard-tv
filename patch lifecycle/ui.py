@@ -20,6 +20,7 @@ from logic import (
 )
 from nav_state import apply_prefilters, consume_prefilters
 from repository import PatchCreateInput
+from ui_styles import accent_gradient_style, content_palette
 
 _VIEW_KEY = "pl_view"
 _PATCH_ID_KEY = "pl_selected_patch_id"
@@ -209,20 +210,11 @@ def _inject_table_styles() -> None:
         <style>
             [data-testid="stDataFrame"] { font-size: 0.92rem; }
             .pl-branch-heading {
-                background: #e8eaef;
-                color: #31333f;
-                border-left: 4px solid #ff4b4b;
                 padding: 0.4rem 0.85rem;
                 border-radius: 0.35rem;
                 margin: 1.1rem 0 0.35rem 0;
                 font-weight: 650;
                 font-size: 1.05rem;
-            }
-            [data-theme="dark"] .pl-branch-heading,
-            .stApp[data-theme="dark"] .pl-branch-heading {
-                background: #2d2f38;
-                color: #fafafa;
-                border-left-color: #ff6b6b;
             }
             [data-theme="dark"] [data-testid="stDataFrame"] div[data-testid="glideDataEditor"],
             .stApp[data-theme="dark"] [data-testid="stDataFrame"] div[data-testid="glideDataEditor"] {
@@ -246,8 +238,12 @@ def _render_branch_section(
     view_key: str,
     side_filter: str,
 ) -> None:
+    accent = "#ff1744"
+    grad = accent_gradient_style(accent)
+    heading_color = content_palette()["heading"]
     st.markdown(
-        f'<div class="pl-branch-heading">{branch_name}</div>',
+        f'<div class="pl-branch-heading app-accent-panel" style="--accent:{accent};{grad}'
+        f'color:{heading_color};">{branch_name}</div>',
         unsafe_allow_html=True,
     )
     df = _patches_to_dataframe(branch_patches, side_filter=side_filter)

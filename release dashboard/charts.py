@@ -31,7 +31,18 @@ def _base_layout(**overrides: Any) -> dict:
 
 def _apply_layout(fig: go.Figure, **overrides: Any) -> None:
     """Apply layout as a single dict (avoids duplicate-kw errors in Plotly)."""
-    fig.update_layout(_base_layout(**overrides))
+    layout = _base_layout(**overrides)
+    for key in ("title",):
+        val = layout.get(key)
+        if isinstance(val, dict) and not val.get("text"):
+            val["text"] = ""
+    for axis_key in ("xaxis", "yaxis"):
+        axis = layout.get(axis_key)
+        if isinstance(axis, dict):
+            axis_title = axis.get("title")
+            if isinstance(axis_title, dict) and not axis_title.get("text"):
+                axis_title["text"] = ""
+    fig.update_layout(layout)
 
 
 def status_pie_chart(status_counts: dict[str, int]) -> go.Figure:
@@ -47,7 +58,7 @@ def status_pie_chart(status_counts: dict[str, int]) -> go.Figure:
                 labels=labels,
                 values=values,
                 hole=0.52,
-                marker={"colors": colors, "line": {"color": slice_line, "width": 2}},
+                marker={"colors": colors, "line": {"color": slice_line, "width": 2.5}},
                 textinfo="label+percent",
                 textposition="outside",
                 textfont={"color": outside, "size": 12},
@@ -73,7 +84,7 @@ def side_donut_chart(side_counts: dict[str, int]) -> go.Figure:
                 labels=labels,
                 values=values,
                 hole=0.58,
-                marker={"colors": colors, "line": {"color": slice_line, "width": 2}},
+                marker={"colors": colors, "line": {"color": slice_line, "width": 2.5}},
                 textinfo="label+value",
                 textfont={"color": outside, "size": 12},
                 hovertemplate="<b>%{label}</b><br>%{value} patches<extra></extra>",
@@ -88,7 +99,10 @@ def pending_action_bar(pending: dict[str, int]) -> go.Figure:
     items = sorted(pending.items(), key=lambda x: x[1], reverse=True)
     labels = [k for k, v in items if v > 0] or ["No pending actions"]
     values = [pending[k] for k in labels] if items else [0]
-    colors = [dash_config.COLOR_ORANGE if v >= 5 else dash_config.COLOR_YELLOW for v in values]
+    colors = [
+        dash_config.COLOR_RED if v >= 5 else dash_config.COLOR_ORANGE if v >= 2 else dash_config.COLOR_YELLOW
+        for v in values
+    ]
 
     text_color = plotly_outside_text_color()
     fig = go.Figure(
@@ -99,7 +113,7 @@ def pending_action_bar(pending: dict[str, int]) -> go.Figure:
                 orientation="h",
                 marker={
                     "color": colors,
-                    "line": {"color": _bar_line_color(), "width": 1},
+                    "line": {"color": _bar_line_color(), "width": 1.5},
                 },
                 text=values,
                 textposition="outside",
@@ -123,6 +137,10 @@ def patch_type_bar(type_counts: dict[str, int]) -> go.Figure:
     values = [type_counts[k] for k in labels]
     short = [lab.replace(" Patch", "").replace(" Hotfix", "") for lab in labels]
 
+    bar_colors = [
+        dash_config.PATCH_TYPE_BAR_COLORS.get(lab, dash_config.CHART_PALETTE[i % len(dash_config.CHART_PALETTE)])
+        for i, lab in enumerate(labels)
+    ]
     text_color = plotly_outside_text_color()
     fig = go.Figure(
         data=[
@@ -130,10 +148,9 @@ def patch_type_bar(type_counts: dict[str, int]) -> go.Figure:
                 x=short,
                 y=values,
                 marker={
-                    "color": values,
-                    "colorscale": [[0, "#90caf9"], [0.5, "#42a5f5"], [1, "#1565c0"]],
-                    "line": {"color": _bar_line_color(), "width": 1},
-                    "cornerradius": 6,
+                    "color": bar_colors,
+                    "line": {"color": _bar_line_color(), "width": 1.5},
+                    "cornerradius": 8,
                 },
                 text=values,
                 textposition="outside",
@@ -161,10 +178,10 @@ def weekly_trend_chart(created: dict[str, int], closed: dict[str, int]) -> go.Fi
             y=[created[w] for w in weeks],
             mode="lines+markers",
             name="Created",
-            line={"color": dash_config.COLOR_BLUE, "width": 3, "shape": "spline"},
-            marker={"size": 8, "line": {"width": 2, "color": "#fff"}},
+            line={"color": dash_config.COLOR_BLUE, "width": 3.5, "shape": "spline"},
+            marker={"size": 10, "line": {"width": 2, "color": "#fff"}},
             fill="tozeroy",
-            fillcolor="rgba(21, 101, 192, 0.12)",
+            fillcolor="rgba(68, 138, 255, 0.28)",
         )
     )
     fig.add_trace(
@@ -173,10 +190,10 @@ def weekly_trend_chart(created: dict[str, int], closed: dict[str, int]) -> go.Fi
             y=[closed[w] for w in weeks],
             mode="lines+markers",
             name="Closed",
-            line={"color": dash_config.COLOR_GREEN, "width": 3, "shape": "spline"},
-            marker={"size": 8, "line": {"width": 2, "color": "#fff"}},
+            line={"color": dash_config.COLOR_GREEN, "width": 3.5, "shape": "spline"},
+            marker={"size": 10, "line": {"width": 2, "color": "#fff"}},
             fill="tozeroy",
-            fillcolor="rgba(46, 125, 50, 0.10)",
+            fillcolor="rgba(0, 230, 118, 0.22)",
         )
     )
     _apply_layout(
@@ -199,14 +216,14 @@ def developer_workload_chart(
     if not devs:
         devs = ["Unassigned"]
 
-    total_color = "#607d8b" if is_dark_theme() else "#cfd8dc"
+    total_color = dash_config.COLOR_TEAL if is_dark_theme() else dash_config.COLOR_SLATE
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             name="Open",
             x=devs,
             y=[open_counts.get(d, 0) for d in devs],
-            marker={"color": dash_config.COLOR_BLUE, "cornerradius": 4},
+            marker={"color": dash_config.COLOR_BLUE, "cornerradius": 6},
         )
     )
     fig.add_trace(
@@ -214,7 +231,7 @@ def developer_workload_chart(
             name="Blocked",
             x=devs,
             y=[blocked.get(d, 0) for d in devs],
-            marker={"color": dash_config.COLOR_RED, "cornerradius": 4},
+            marker={"color": dash_config.COLOR_RED, "cornerradius": 6},
         )
     )
     fig.add_trace(
@@ -222,7 +239,7 @@ def developer_workload_chart(
             name="Total in scope",
             x=devs,
             y=[total.get(d, 0) for d in devs],
-            marker={"color": total_color, "cornerradius": 4},
+            marker={"color": total_color, "cornerradius": 6},
         )
     )
     _apply_layout(
@@ -247,7 +264,7 @@ def aging_chart(buckets: dict[str, int]) -> go.Figure:
             go.Bar(
                 x=order,
                 y=values,
-                marker={"color": colors, "cornerradius": 8, "line": {"width": 0}},
+                marker={"color": colors, "cornerradius": 10, "line": {"width": 0}},
                 text=values,
                 textposition="outside",
                 textfont={"color": text_color},
@@ -281,14 +298,19 @@ def readiness_gauge(
             number={"suffix": "%", "font": {"size": 28, "color": label_color}},
             title={"text": title, "font": {"size": 14, "color": label_color}},
             gauge={
-                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": axis_color},
+                "axis": {
+                    "range": [0, 100],
+                    "tickwidth": 1,
+                    "tickcolor": axis_color,
+                    "tickfont": {"color": axis_color, "size": 11},
+                },
                 "bar": {"color": color, "thickness": 0.75},
                 "bgcolor": gauge_bg,
                 "borderwidth": 0,
                 "steps": [
-                    {"range": [0, 60], "color": "rgba(229, 57, 53, 0.22)"},
-                    {"range": [60, 85], "color": "rgba(255, 179, 0, 0.22)"},
-                    {"range": [85, 100], "color": "rgba(67, 160, 71, 0.25)"},
+                    {"range": [0, 60], "color": "rgba(255, 23, 68, 0.35)"},
+                    {"range": [60, 85], "color": "rgba(255, 145, 0, 0.35)"},
+                    {"range": [85, 100], "color": "rgba(0, 230, 118, 0.38)"},
                 ],
                 "threshold": {
                     "line": {"color": axis_color, "width": 2},
@@ -300,6 +322,9 @@ def readiness_gauge(
     )
     _apply_layout(
         fig,
+        title={"text": ""},
+        xaxis={"visible": False},
+        yaxis={"visible": False},
         margin={"l": 30, "r": 30, "t": 60, "b": 10},
         height=260,
     )

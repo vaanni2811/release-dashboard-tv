@@ -2,41 +2,50 @@
 
 from __future__ import annotations
 
-# Semantic palette
-COLOR_GREEN = "#2e7d32"
-COLOR_YELLOW = "#f9a825"
-COLOR_ORANGE = "#ef6c00"
-COLOR_RED = "#c62828"
-COLOR_BLUE = "#1565c0"
-COLOR_TEAL = "#00897b"
-COLOR_PURPLE = "#6a1b9a"
-COLOR_SLATE = "#546e7a"
+# Semantic palette — vivid, high-contrast
+COLOR_GREEN = "#00e676"
+COLOR_YELLOW = "#ffea00"
+COLOR_ORANGE = "#ff9100"
+COLOR_RED = "#ff1744"
+COLOR_BLUE = "#448aff"
+COLOR_TEAL = "#00e5ff"
+COLOR_PURPLE = "#e040fb"
+COLOR_SLATE = "#78909c"
+COLOR_PINK = "#ff4081"
+COLOR_LIME = "#c6ff00"
 
 CHART_PALETTE: tuple[str, ...] = (
-    "#4e79a7",
-    "#59a14f",
-    "#f28e2b",
-    "#e15759",
-    "#76b7b2",
-    "#edc948",
-    "#b07aa1",
-    "#ff9da7",
-    "#9c755f",
-    "#bab0ac",
+    "#448aff",
+    "#00e676",
+    "#ff9100",
+    "#ff1744",
+    "#00e5ff",
+    "#ffea00",
+    "#e040fb",
+    "#ff4081",
+    "#18ffff",
+    "#76ff03",
 )
 
 STATUS_PIE_COLORS: dict[str, str] = {
-    "Open": "#42a5f5",
-    "In Progress": "#1565c0",
-    "Blocked": "#e53935",
-    "Ready To Close": "#ffb300",
-    "Closed": "#43a047",
+    "Open": "#448aff",
+    "In Progress": "#2979ff",
+    "Blocked": "#ff1744",
+    "Ready To Close": "#ffea00",
+    "Closed": "#00e676",
 }
 
 SIDE_DONUT_COLORS: dict[str, str] = {
-    "FC": COLOR_TEAL,
-    "WM": COLOR_PURPLE,
-    "Both": "#7e57c2",
+    "FC": "#00e5ff",
+    "WM": "#e040fb",
+    "Both": "#ff4081",
+}
+
+PATCH_TYPE_BAR_COLORS: dict[str, str] = {
+    "Weekly Hotfix": COLOR_BLUE,
+    "Urgent Hotfix": COLOR_RED,
+    "Demo UAT Patch": COLOR_PURPLE,
+    "Release Patch": COLOR_TEAL,
 }
 
 CARD_ACCENTS: dict[str, str] = {
@@ -48,7 +57,7 @@ CARD_ACCENTS: dict[str, str] = {
     "blocked": COLOR_RED,
     "ready": COLOR_GREEN,
     "closed": COLOR_TEAL,
-    "urgent": COLOR_RED,
+    "urgent": COLOR_PINK,
 }
 
 INSIGHT_TONES: dict[str, str] = {
@@ -72,8 +81,10 @@ PLOTLY_LAYOUT_DEFAULTS: dict = {
     "paper_bgcolor": "rgba(0,0,0,0)",
     "plot_bgcolor": "rgba(0,0,0,0)",
     "margin": {"l": 24, "r": 24, "t": 48, "b": 24},
-    "title": {"font": {"size": 16, "color": "#263238"}},
+    "title": {"text": "", "font": {"size": 16, "color": "#263238"}},
     "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+    "xaxis": {"title": {"text": ""}},
+    "yaxis": {"title": {"text": ""}},
 }
 
 TYPE_FILTER_OPTIONS: tuple[tuple[str, str], ...] = (

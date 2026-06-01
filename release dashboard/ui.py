@@ -10,6 +10,8 @@ import charts
 import dashboard_config as dash_config
 import insights
 import nav
+from theme import dashboard_palette
+from ui_styles import accent_gradient_style, content_palette
 
 _SIDE_KEY = "rd_side_filter"
 _DATE_KEY = "rd_date_preset"
@@ -55,87 +57,65 @@ def _analytics():
 
 
 def _inject_dashboard_styles() -> None:
+    p = content_palette()
     st.markdown(
-        """
+        f"""
         <style>
-            .rd-metric-card {
-                background: var(--secondary-background-color, #f8f9fb);
+            .rd-metric-card {{
                 border-radius: 12px;
                 padding: 0.85rem 1rem 0.65rem 1rem;
-                border: 1px solid rgba(120, 130, 140, 0.18);
-                border-left: 4px solid var(--accent, #1565c0);
                 min-height: 92px;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-            }
-            .rd-metric-label {
+                box-shadow: {p["shadow"]};
+            }}
+            .rd-metric-label {{
                 font-size: 0.82rem;
-                color: #546e7a;
                 font-weight: 600;
                 letter-spacing: 0.02em;
                 text-transform: uppercase;
-            }
-            .rd-metric-value {
+            }}
+            .rd-metric-value {{
                 font-size: 1.85rem;
                 font-weight: 750;
                 line-height: 1.15;
                 margin-top: 0.15rem;
-                color: #263238;
-            }
-            .rd-insight {
-                border-left: 4px solid var(--accent, #1565c0);
-                background: var(--secondary-background-color, #f8f9fb);
-                color: #263238;
+            }}
+            .rd-insight {{
                 padding: 0.65rem 0.85rem;
                 border-radius: 8px;
                 margin-bottom: 0.45rem;
                 font-size: 0.95rem;
-            }
-            .rd-section-title {
-                font-weight: 650;
-                font-size: 1.05rem;
+            }}
+            .rd-insight strong {{
+                font-weight: 700;
+            }}
+            .rd-section-title {{
+                font-weight: 700;
+                font-size: 1.1rem;
                 margin: 1.2rem 0 0.5rem 0;
-                color: #263238;
-            }
-            [data-theme="dark"] .rd-metric-card,
-            .stApp[data-theme="dark"] .rd-metric-card {
-                background: #262730;
-                border-color: rgba(255,255,255,0.12);
-                box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-            }
-            [data-theme="dark"] .rd-metric-label,
-            .stApp[data-theme="dark"] .rd-metric-label {
-                color: #b0b8c4;
-            }
-            [data-theme="dark"] .rd-metric-value,
-            .stApp[data-theme="dark"] .rd-metric-value {
-                color: #fafafa;
-            }
-            [data-theme="dark"] .rd-insight,
-            .stApp[data-theme="dark"] .rd-insight {
-                background: #262730;
-                color: #e8eaed;
-                border-color: rgba(255,255,255,0.12);
-            }
-            [data-theme="dark"] .rd-insight strong,
-            .stApp[data-theme="dark"] .rd-insight strong {
-                color: #ffffff;
-            }
-            [data-theme="dark"] .rd-section-title,
-            .stApp[data-theme="dark"] .rd-section-title {
-                color: #fafafa;
-            }
+                letter-spacing: 0.01em;
+            }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
+def _section_title(text: str) -> None:
+    p = dashboard_palette()
+    st.markdown(
+        f'<div class="rd-section-title" style="color:{p["section"]};">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _metric_card(label: str, value: int | float, accent: str) -> str:
+    p = dashboard_palette()
     display = int(value) if float(value).is_integer() else value
+    grad = accent_gradient_style(accent)
     return (
-        f'<div class="rd-metric-card" style="--accent:{accent};">'
-        f'<div class="rd-metric-label">{label}</div>'
-        f'<div class="rd-metric-value">{display}</div>'
+        f'<div class="rd-metric-card app-accent-panel" style="--accent:{accent};{grad}">'
+        f'<div class="rd-metric-label" style="color:{p["label"]};">{label}</div>'
+        f'<div class="rd-metric-value" style="color:{p["value"]};">{display}</div>'
         f"</div>"
     )
 
@@ -208,7 +188,7 @@ def render() -> None:
     filters = _filters(analytics_mod)
     metrics = analytics_mod.compute_dashboard_metrics(filters)
 
-    st.markdown('<div class="rd-section-title">Release readiness</div>', unsafe_allow_html=True)
+    _section_title("Release readiness")
     g1, g2, g3 = st.columns(3)
     with g1:
         st.plotly_chart(
@@ -229,7 +209,7 @@ def render() -> None:
             config={"displayModeBar": False},
         )
 
-    st.markdown('<div class="rd-section-title">At a glance</div>', unsafe_allow_html=True)
+    _section_title("At a glance")
     row1 = st.columns(6)
     cards_r1 = [
         ("Open Patches", metrics.total_open, dash_config.CARD_ACCENTS["open"], "total_open"),
@@ -317,11 +297,14 @@ def render() -> None:
         config={"displayModeBar": False},
     )
 
-    st.markdown('<div class="rd-section-title">Key insights</div>', unsafe_allow_html=True)
+    _section_title("Key insights")
+    palette = dashboard_palette()
     for idx, item in enumerate(insights.build_insights(metrics, side_filter=filters.side_filter)):
         color = insights.insight_border_color(item.tone)
+        grad = accent_gradient_style(color)
         st.markdown(
-            f'<div class="rd-insight" style="--accent:{color};">{item.message}</div>',
+            f'<div class="rd-insight app-accent-panel" style="--accent:{color};{grad}'
+            f'color:{palette["body"]};">{item.message}</div>',
             unsafe_allow_html=True,
         )
         if item.prefilter_key:

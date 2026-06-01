@@ -23,6 +23,7 @@ if load_dotenv:
 import streamlit as st
 
 from tool_loader import load_tool_render
+from ui_styles import inject_global_styles
 
 TOOLS: dict[str, str] = {
     "Patch Lifecycle": "patch lifecycle",
@@ -104,6 +105,7 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     _inject_typography_styles()
+    inject_global_styles()
 
     if "selected_view" not in st.session_state:
         st.session_state.selected_view = HOME

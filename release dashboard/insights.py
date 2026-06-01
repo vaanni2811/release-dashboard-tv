@@ -23,7 +23,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.pending_uat > 0:
         insights.append(
             Insight(
-                f"UAT carry-forward is pending for **{m.pending_uat}** patch{'es' if m.pending_uat != 1 else ''}.",
+                f"UAT carry-forward is pending for <strong>{m.pending_uat}</strong> patch{'es' if m.pending_uat != 1 else ''}.",
                 "warning",
                 "pending_uat",
             )
@@ -31,7 +31,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.urgent > 0:
         insights.append(
             Insight(
-                f"**{m.urgent}** urgent patch{'es' if m.urgent != 1 else ''} still open.",
+                f"<strong>{m.urgent}</strong> urgent patch{'es' if m.urgent != 1 else ''} still open.",
                 "critical",
                 "urgent",
             )
@@ -39,7 +39,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if side_filter in ("WM Patches", "All Patches") and m.pending_stage > 0:
         insights.append(
             Insight(
-                f"WM has **{m.pending_stage}** patch{'es' if m.pending_stage != 1 else ''} pending stage / integration.",
+                f"WM has <strong>{m.pending_stage}</strong> patch{'es' if m.pending_stage != 1 else ''} pending stage / integration.",
                 "warning",
                 "pending_stage",
             )
@@ -47,7 +47,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if side_filter in ("FC Patches", "All Patches") and m.pending_release_branch > 0:
         insights.append(
             Insight(
-                f"**{m.pending_release_branch}** patch{'es' if m.pending_release_branch != 1 else ''} pending release branch update.",
+                f"<strong>{m.pending_release_branch}</strong> patch{'es' if m.pending_release_branch != 1 else ''} pending release branch update.",
                 "risk",
                 "pending_release_branch",
             )
@@ -55,7 +55,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.pending_queries > 0:
         insights.append(
             Insight(
-                f"**{m.pending_queries}** patch{'es' if m.pending_queries != 1 else ''} have pending DB queries.",
+                f"<strong>{m.pending_queries}</strong> patch{'es' if m.pending_queries != 1 else ''} have pending DB queries.",
                 "warning",
                 "pending_queries",
             )
@@ -63,7 +63,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.pending_production_master > 0:
         insights.append(
             Insight(
-                f"**{m.pending_production_master}** patch{'es' if m.pending_production_master != 1 else ''} pending production / master merge.",
+                f"<strong>{m.pending_production_master}</strong> patch{'es' if m.pending_production_master != 1 else ''} pending production / master merge.",
                 "risk",
                 "pending_production",
             )
@@ -71,7 +71,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.blocked > 0:
         insights.append(
             Insight(
-                f"**{m.blocked}** patch{'es' if m.blocked != 1 else ''} blocked or at risk.",
+                f"<strong>{m.blocked}</strong> patch{'es' if m.blocked != 1 else ''} blocked or at risk.",
                 "critical",
                 "blocked",
             )
@@ -88,7 +88,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     elif readiness >= 90:
         insights.append(
             Insight(
-                f"Current release readiness is **{readiness:.0f}%** — on track.",
+                f"Current release readiness is <strong>{readiness:.0f}%</strong> — on track.",
                 "healthy",
             )
         )
@@ -96,13 +96,13 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
         drift = "High" if readiness < 60 else "Medium" if readiness < 85 else "Low"
         insights.append(
             Insight(
-                f"Current release readiness is **{readiness:.0f}%**. Branch drift risk: **{drift}**.",
+                f"Current release readiness is <strong>{readiness:.0f}%</strong>. Branch drift risk: <strong>{drift}</strong>.",
                 "risk" if readiness < 85 else "info",
             )
         )
         insights.append(
             Insight(
-                f"UAT readiness **{m.uat_readiness_pct:.0f}%** · Stage readiness **{m.stage_readiness_pct:.0f}%**.",
+                f"UAT readiness <strong>{m.uat_readiness_pct:.0f}%</strong> · Stage readiness <strong>{m.stage_readiness_pct:.0f}%</strong>.",
                 "info",
             )
         )
@@ -110,7 +110,7 @@ def build_insights(metrics: Any, *, side_filter: str) -> list[Insight]:
     if m.ready_to_close > 0:
         insights.append(
             Insight(
-                f"**{m.ready_to_close}** patch{'es' if m.ready_to_close != 1 else ''} ready to close.",
+                f"<strong>{m.ready_to_close}</strong> patch{'es' if m.ready_to_close != 1 else ''} ready to close.",
                 "healthy",
                 "ready_to_close",
             )

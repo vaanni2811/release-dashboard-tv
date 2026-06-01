@@ -9,6 +9,10 @@ from pathlib import Path
 
 from tool_module_loader import ROOT, load_tool_module, prepare_tool_modules
 
+# Repo root on path so tools can `import ui_styles`.
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
 # Re-export for callers that import from tool_loader.
 __all__ = ["load_tool_render", "load_tool_module", "ROOT"]
 
