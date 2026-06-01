@@ -35,7 +35,7 @@ def _parse_date_input(label: str, key: str) -> date | None:
 
 
 def render() -> None:
-    st.title("Hotfix branch automation")
+    st.title("Hotfix Branch Automation")
     st.caption("Rule-driven Bitbucket hotfix branches — replaces manual cuts and Excel lineage.")
 
     credentials_set = bitbucket_auth.credentials_available()

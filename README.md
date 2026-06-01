@@ -44,6 +44,13 @@ git push origin main
 
 **SSH auth:** Add your SSH key to GitHub, set remote to `git@github.com:vaanni2811/release-dashboard-tv.git`, then `git push origin main`.
 
+**If `git push` keeps failing** (invalid username/token), run the interactive helper in your terminal (you paste the PAT when prompted — it is not echoed):
+
+```bash
+cd release-dashboard-tv
+bash scripts/push-github.sh
+```
+
 ## Run locally
 
 ```bash

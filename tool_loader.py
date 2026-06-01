@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from collections.abc import Callable
@@ -10,23 +11,46 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 # Module basenames shared across tools (same filename in each tool folder).
-_TOOL_SIBLING_MODULES = frozenset(
-    {"logic", "config", "utils", "bitbucket", "bitbucket_auth"},
+# Reload order matters: config first, then dependents (db, display, repository).
+_TOOL_SIBLING_MODULES: tuple[str, ...] = (
+    "config",
+    "logic",
+    "utils",
+    "bitbucket",
+    "bitbucket_auth",
+    "db",
+    "display",
+    "repository",
 )
 
 
-def _evict_foreign_tool_modules(tool_path: Path) -> None:
-    """Drop cached sibling imports from other tool folders (e.g. logic, config)."""
+def _module_tool_dir(mod: object) -> Path | None:
+    mod_file = getattr(mod, "__file__", None)
+    if not mod_file:
+        return None
+    return Path(mod_file).resolve().parent
+
+
+def _prepare_tool_modules(tool_path: Path) -> None:
+    """Drop sibling imports from other tools; reload this tool's cached modules."""
     tool_resolved = tool_path.resolve()
+
+    # Drop cached tool UI modules so each navigation re-binds fresh imports.
+    for key in list(sys.modules):
+        if key.startswith("tool_") and key.endswith("_ui"):
+            del sys.modules[key]
+
     for name in _TOOL_SIBLING_MODULES:
         mod = sys.modules.get(name)
         if mod is None:
             continue
-        mod_file = getattr(mod, "__file__", None)
-        if not mod_file:
+        mod_dir = _module_tool_dir(mod)
+        if mod_dir is None:
             continue
-        if Path(mod_file).resolve().parent != tool_resolved:
+        if mod_dir != tool_resolved:
             del sys.modules[name]
+        else:
+            importlib.reload(mod)
 
 
 def load_tool_render(tool_dir: str) -> Callable[[], None]:
@@ -46,7 +70,7 @@ def load_tool_render(tool_dir: str) -> Callable[[], None]:
     inserted = tool_root not in sys.path
     if inserted:
         sys.path.insert(0, tool_root)
-    _evict_foreign_tool_modules(tool_path)
+    _prepare_tool_modules(tool_path)
     try:
         spec.loader.exec_module(module)
     finally:

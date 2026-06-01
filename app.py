@@ -25,12 +25,14 @@ import streamlit as st
 from tool_loader import load_tool_render
 
 TOOLS: dict[str, str] = {
-    "HP Branch Cut": "hotfix branch automation",
+    "Patch Lifecycle": "patch lifecycle",
+    "Hotfix Branch Automation": "hotfix branch automation",
     "SRE Generator": "SRE generator",
 }
 
 HOME = "Home"
 HOME_DIR = "release dashboard"
+TOOLS_SECTION_LABEL = "Release Overview/Tools"
 
 
 def _view_dirs() -> list[str]:
@@ -99,6 +101,9 @@ def main() -> None:
 
     if "selected_view" not in st.session_state:
         st.session_state.selected_view = HOME
+    # Legacy sidebar label from before rename
+    if st.session_state.selected_view == "HP Branch Cut":
+        st.session_state.selected_view = "Hotfix Branch Automation"
 
     with st.sidebar:
         home_selected = st.session_state.selected_view == HOME
@@ -111,7 +116,10 @@ def main() -> None:
             st.session_state.selected_view = HOME
             st.rerun()
 
-        st.markdown('<p class="sidebar-tools-label">Tools</p>', unsafe_allow_html=True)
+        st.markdown(
+            f'<p class="sidebar-tools-label">{TOOLS_SECTION_LABEL}</p>',
+            unsafe_allow_html=True,
+        )
         for tool_name in TOOLS:
             is_selected = st.session_state.selected_view == tool_name
             if st.button(

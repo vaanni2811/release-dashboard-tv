@@ -6,7 +6,12 @@ import streamlit as st
 
 TOOLS: tuple[tuple[str, str, str], ...] = (
     (
-        "HP Branch Cut",
+        "Patch Lifecycle",
+        "patch lifecycle",
+        "Track every patch from capture through production, branch updates, queries, UAT, and closure.",
+    ),
+    (
+        "Hotfix Branch Automation",
         "hotfix branch automation",
         "Create hotfix branches in Bitbucket from repo + week; preview naming and lineage.",
     ),
@@ -22,10 +27,10 @@ def render() -> None:
     st.title("Release dashboard")
     st.markdown(
         "Local Streamlit workspace for FranConnect release workflows. "
-        "Pick a tool in the sidebar."
+        "Open **Release Overview/Tools** in the sidebar to pick a tool."
     )
 
-    st.subheader("Tools in this project")
+    st.subheader("Release Overview / Tools")
     for name, folder, description in TOOLS:
         with st.expander(name, expanded=True):
             st.markdown(description)
@@ -38,7 +43,8 @@ def render() -> None:
 | --- | --- |
 | `app.py` | Main entry — sidebar routes to home and tools |
 | `tool_loader.py` | Loads each tool's `ui.py` |
-| `hotfix branch automation/` | HP Branch Cut (Bitbucket API) |
+| `patch lifecycle/` | Patch registry and lifecycle tracker (planned) |
+| `hotfix branch automation/` | Hotfix Branch Automation (Bitbucket API) |
 | `SRE generator/` | SRE ticket generator (no API) |
 | `release dashboard/` | This home view |
 | `requirements.txt` | Python dependencies |
@@ -47,7 +53,7 @@ def render() -> None:
     )
 
     st.info(
-        "**Hotfix tool:** set `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`, and "
+        "**Hotfix Branch Automation:** set `BITBUCKET_EMAIL`, `BITBUCKET_API_TOKEN`, and "
         "`BITBUCKET_WORKSPACE` in a local `.env` file (never commit it). "
-        "**SRE Generator** does not need credentials."
+        "**SRE Generator** and **Patch Lifecycle** (MVP) do not need Bitbucket for basic use."
     )
