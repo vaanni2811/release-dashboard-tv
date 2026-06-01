@@ -18,6 +18,7 @@ from logic import (
     lifecycle_fields_for_track,
     patch_row_tone,
 )
+from nav_state import apply_prefilters, consume_prefilters
 from repository import PatchCreateInput
 
 _VIEW_KEY = "pl_view"
@@ -208,8 +209,8 @@ def _inject_table_styles() -> None:
         <style>
             [data-testid="stDataFrame"] { font-size: 0.92rem; }
             .pl-branch-heading {
-                background: var(--secondary-background-color, #e8eaef);
-                color: var(--text-color, #31333f);
+                background: #e8eaef;
+                color: #31333f;
                 border-left: 4px solid #ff4b4b;
                 padding: 0.4rem 0.85rem;
                 border-radius: 0.35rem;
@@ -222,6 +223,10 @@ def _inject_table_styles() -> None:
                 background: #2d2f38;
                 color: #fafafa;
                 border-left-color: #ff6b6b;
+            }
+            [data-theme="dark"] [data-testid="stDataFrame"] div[data-testid="glideDataEditor"],
+            .stApp[data-theme="dark"] [data-testid="stDataFrame"] div[data-testid="glideDataEditor"] {
+                color: #e8eaed;
             }
         </style>
         """,
@@ -352,6 +357,26 @@ def _parse_subfilter(sub_value: str) -> tuple[str | None, bool]:
     if sub_value == config.SUBFILTER_PENDING:
         return None, True
     return sub_value, False
+
+
+def _apply_home_navigation() -> None:
+    """Apply one-shot filters from Home dashboard deep links."""
+    pref = consume_prefilters()
+    if not pref:
+        return
+    apply_prefilters(pref)
+    side = pref.get("side_filter") or _side_filter()
+    pending_only = pref.get("view") == "Pending follow-ups"
+    patch_type = pref.get("patch_type")
+    if patch_type and patch_type in config.PATCH_TYPES:
+        st.session_state[f"pl_filter_type_{pending_only}_{side}"] = patch_type
+        if pref.get("require_pending"):
+            st.session_state[
+                f"pl_filter_sub_{pending_only}_{side}_{patch_type}"
+            ] = _subfilter_pending_label(patch_type)
+    developer = pref.get("developer")
+    if developer:
+        st.session_state[f"pl_filter_dev_{pending_only}_{side}"] = developer
 
 
 def _render_list(*, pending_only: bool) -> None:
@@ -537,6 +562,7 @@ def _render_detail() -> None:
 
 def render() -> None:
     db.init_db()
+    _apply_home_navigation()
     st.title("Patch Lifecycle")
     st.caption("Patch registry and lifecycle tracker (local SQLite).")
     _render_side_toggle()

@@ -85,6 +85,12 @@ def _inject_typography_styles() -> None:
                 text-align: left;
                 justify-content: flex-start;
             }
+            [data-theme="dark"] .stCaption,
+            .stApp[data-theme="dark"] .stCaption,
+            [data-theme="dark"] [data-testid="stCaptionContainer"],
+            .stApp[data-theme="dark"] [data-testid="stCaptionContainer"] {
+                color: #b0b8c4;
+            }
         </style>
         """,
         unsafe_allow_html=True,

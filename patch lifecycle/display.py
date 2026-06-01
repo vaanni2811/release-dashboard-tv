@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import streamlit as st
 
 import config
 
@@ -63,7 +64,7 @@ STATUS_LEGEND = (
     "Rows: green = all done · red = cancelled / reverted"
 )
 
-PATCH_ROW_STYLES: dict[str, str] = {
+PATCH_ROW_STYLES_LIGHT: dict[str, str] = {
     "negative": (
         "background-color: #efb0b0; "
         "color: #4a1212; "
@@ -78,6 +79,45 @@ PATCH_ROW_STYLES: dict[str, str] = {
     ),
 }
 
+PATCH_ROW_STYLES_DARK: dict[str, str] = {
+    "negative": (
+        "background-color: #5c2b2b; "
+        "color: #ffcdd2; "
+        "border-top: 1px solid #8b4545; "
+        "border-bottom: 1px solid #8b4545;"
+    ),
+    "complete": (
+        "background-color: #1e4d2b; "
+        "color: #c8e6c9; "
+        "border-top: 1px solid #388e3c; "
+        "border-bottom: 1px solid #388e3c;"
+    ),
+}
+
+# Backwards-compatible alias.
+PATCH_ROW_STYLES = PATCH_ROW_STYLES_LIGHT
+
+
+def _is_dark_theme() -> bool:
+    try:
+        theme = st.context.theme
+        base = getattr(theme, "base", None)
+        if base and str(base).lower() == "dark":
+            return True
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        base = st.get_option("theme.base")
+        if base and str(base).lower() == "dark":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _patch_row_styles() -> dict[str, str]:
+    return PATCH_ROW_STYLES_DARK if _is_dark_theme() else PATCH_ROW_STYLES_LIGHT
+
 
 def style_patch_dataframe(
     df: pd.DataFrame,
@@ -87,7 +127,7 @@ def style_patch_dataframe(
 
     def _row_style(row: pd.Series) -> list[str]:
         tone = row_tones[row.name] if row.name < len(row_tones) else None
-        css = PATCH_ROW_STYLES.get(tone or "", "")
+        css = _patch_row_styles().get(tone or "", "")
         if css:
             return [css] * len(row)
         return [""] * len(row)
