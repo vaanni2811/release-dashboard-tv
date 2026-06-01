@@ -9,7 +9,7 @@ from typing import Iterator
 
 import config
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS patches (
     qa_status TEXT NOT NULL DEFAULT '',
     developer_name TEXT NOT NULL DEFAULT '',
     product_module TEXT NOT NULL DEFAULT '',
+    patch_side TEXT NOT NULL DEFAULT 'fc',
     system_status TEXT NOT NULL DEFAULT '',
     manual_status_override TEXT,
     db_linked_to_hotfix_prod INTEGER NOT NULL DEFAULT 0,
@@ -86,6 +87,15 @@ CREATE TABLE IF NOT EXISTS patch_lifecycle_status (
     uat_deployment_status TEXT NOT NULL,
     qa_verification_status TEXT NOT NULL,
     closure_status TEXT NOT NULL,
+    wm_hotfix_branch_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_master_production_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_release_branch_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_integration_stage_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_uat_branch_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_stage_query_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_uat_query_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_qa_verification_status TEXT NOT NULL DEFAULT 'Not Required',
+    wm_closure_status TEXT NOT NULL DEFAULT 'Not Required',
     blocker_reason TEXT NOT NULL DEFAULT ''
 );
 
@@ -122,9 +132,75 @@ CREATE INDEX IF NOT EXISTS idx_patches_developer ON patches(developer_name);
 CREATE INDEX IF NOT EXISTS idx_patches_type ON patches(patch_type);
 """
 
+_MIGRATION_V2_SQL = (
+    "ALTER TABLE patches ADD COLUMN patch_side TEXT NOT NULL DEFAULT 'fc'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_hotfix_branch_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_master_production_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_release_branch_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_integration_stage_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_uat_branch_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_stage_query_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_uat_query_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_qa_verification_status TEXT NOT NULL DEFAULT 'Not Required'",
+    "ALTER TABLE patch_lifecycle_status ADD COLUMN wm_closure_status TEXT NOT NULL DEFAULT 'Not Required'",
+)
+
 
 def ensure_data_dir() -> None:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {row[1] for row in rows}
+
+
+def _apply_migrations(conn: sqlite3.Connection, current_version: int) -> None:
+    if current_version >= SCHEMA_VERSION:
+        return
+
+    if current_version < 2:
+        patch_cols = _table_columns(conn, "patches")
+        if "patch_side" not in patch_cols:
+            conn.execute(_MIGRATION_V2_SQL[0])
+
+        lc_cols = _table_columns(conn, "patch_lifecycle_status")
+        for statement in _MIGRATION_V2_SQL[1:]:
+            col_name = statement.split("ADD COLUMN ")[1].split(" ")[0]
+            if col_name not in lc_cols:
+                conn.execute(statement)
+
+        conn.execute("UPDATE schema_version SET version = ?", (2,))
+
+
+def _ensure_side_index(conn: sqlite3.Connection) -> None:
+    if "patch_side" in _table_columns(conn, "patches"):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_patches_side ON patches(patch_side)"
+        )
+
+
+def _backfill_patch_sides(conn: sqlite3.Connection) -> None:
+    from logic import compute_patch_side
+
+    if "patch_side" not in _table_columns(conn, "patches"):
+        return
+
+    rows = conn.execute("SELECT id FROM patches").fetchall()
+    for row in rows:
+        internal_id = row["id"]
+        repos = [
+            r["repo_name"]
+            for r in conn.execute(
+                "SELECT repo_name FROM patch_repositories WHERE patch_id = ?",
+                (internal_id,),
+            ).fetchall()
+        ]
+        side = compute_patch_side(repos)
+        conn.execute(
+            "UPDATE patches SET patch_side = ? WHERE id = ?",
+            (side, internal_id),
+        )
 
 
 def init_db(db_path: Path | None = None) -> None:
@@ -139,6 +215,13 @@ def init_db(db_path: Path | None = None) -> None:
                 "INSERT INTO schema_version (version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
+            current_version = SCHEMA_VERSION
+        else:
+            current_version = int(row["version"])
+
+        _apply_migrations(conn, current_version)
+        _ensure_side_index(conn)
+        _backfill_patch_sides(conn)
 
 
 @contextmanager

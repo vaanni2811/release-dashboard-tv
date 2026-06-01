@@ -79,5 +79,47 @@ class TestRepository(unittest.TestCase):
         self.assertEqual(updated.system_status, "Pending Release Branch")
 
 
+    def test_developer_filter_case_insensitive(self) -> None:
+        repository.create_patch(
+            PatchCreateInput(
+                patch_id="FCSKY-999010",
+                patch_type=config.PATCH_TYPE_WEEKLY,
+                developer_name="Chandan Yadav",
+            ),
+            "Vanni Chaudhary",
+        )
+        rows = repository.list_patches(developer="chandan")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].patch_id, "FCSKY-999010")
+
+    def test_branch_subfilter(self) -> None:
+        repository.create_patch(
+            PatchCreateInput(
+                patch_id="FCSKY-999011",
+                patch_type=config.PATCH_TYPE_WEEKLY,
+                branch_name="hotfix_r26q2.9",
+            ),
+            "Vanni Chaudhary",
+        )
+        repository.create_patch(
+            PatchCreateInput(
+                patch_id="FCSKY-999012",
+                patch_type=config.PATCH_TYPE_WEEKLY,
+                branch_name="hotfix_r26q2.8",
+            ),
+            "Vanni Chaudhary",
+        )
+        rows = repository.list_patches(
+            patch_type=config.PATCH_TYPE_WEEKLY,
+            branch_name="hotfix_r26q2.9",
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].patch_id, "FCSKY-999011")
+        branches = repository.list_distinct_branches_for_type(
+            patch_type=config.PATCH_TYPE_WEEKLY,
+        )
+        self.assertIn("hotfix_r26q2.9", branches)
+
+
 if __name__ == "__main__":
     unittest.main()

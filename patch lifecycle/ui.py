@@ -11,7 +11,13 @@ import config
 import db
 import display
 import repository
-from logic import can_close, group_by_branch_name
+from logic import (
+    can_close,
+    closure_field_for_track,
+    group_by_branch_name,
+    lifecycle_fields_for_track,
+    patch_row_tone,
+)
 from repository import PatchCreateInput
 
 _VIEW_KEY = "pl_view"
@@ -24,11 +30,32 @@ def _operator() -> str:
     return st.session_state[config.OPERATOR_SESSION_KEY]
 
 
+def _side_filter() -> str:
+    if config.SIDE_FILTER_SESSION_KEY not in st.session_state:
+        st.session_state[config.SIDE_FILTER_SESSION_KEY] = config.SIDE_FILTER_FC
+    return st.session_state[config.SIDE_FILTER_SESSION_KEY]
+
+
 def _set_view(view: str, patch_id: int | None = None) -> None:
     st.session_state[_VIEW_KEY] = view
     if patch_id is not None:
         st.session_state[_PATCH_ID_KEY] = patch_id
     st.rerun()
+
+
+def _render_side_toggle() -> None:
+    current = _side_filter()
+    cols = st.columns(len(config.SIDE_FILTERS))
+    for col, label in zip(cols, config.SIDE_FILTERS):
+        with col:
+            if st.button(
+                label,
+                key=f"pl_side_{label}",
+                use_container_width=True,
+                type="primary" if current == label else "secondary",
+            ):
+                st.session_state[config.SIDE_FILTER_SESSION_KEY] = label
+                st.rerun()
 
 
 def _render_operator_bar() -> None:
@@ -92,7 +119,11 @@ def _render_create_form() -> None:
             jira_url = st.text_input("Jira URL (optional override)")
 
         description = st.text_area("Description / Details", height=100)
-        repos = st.text_area("Repositories (one per line)", height=80)
+        repos = st.text_area(
+            "Repositories (one per line)",
+            height=80,
+            help="Patch side (FC / WM / Both) is derived automatically from repo names.",
+        )
         mysql = st.text_area("MySQL queries", height=80)
         psql = st.text_area("PostgreSQL queries", height=80)
         configuration = st.text_area("Configuration changes", height=60)
@@ -144,32 +175,31 @@ def _truncate(text: str, max_len: int = 48) -> str:
 def _patches_to_dataframe(
     patches: list[repository.PatchSummary],
     *,
-    include_branch: bool = False,
+    side_filter: str,
 ) -> pd.DataFrame:
     rows: list[dict[str, str]] = []
-    lifecycle_columns = display.lifecycle_table_columns()
+    lifecycle_columns = display.lifecycle_table_columns(side_filter)
+    show_side = side_filter == config.SIDE_FILTER_ALL
     for p in patches:
-        lifecycle = p.lifecycle
         row: dict[str, str] = {
             "Patch ID": f"{'🔴 ' if p.is_urgent else ''}{p.patch_id}",
             "Details": _truncate(p.title),
-            "Repos": _truncate(p.repos_summary or "", 36),
-            "Developer": p.developer_name or "—",
-            "Patch Date": p.patch_date or "—",
-            "QA Date": p.qa_date or "—",
-            "QA Stat": p.qa_status or "—",
         }
-        if include_branch:
-            row["Branch"] = p.branch_name or "—"
+        if show_side:
+            row["Side"] = display.patch_side_label(p.patch_side)
+        row["Patch Type"] = p.patch_type
+        row["Repos"] = _truncate(p.repos_summary or "", 36)
+        row["Branch"] = p.branch_name or "—"
+        row["Developer"] = p.developer_name or "—"
+        row["Patch Date"] = p.patch_date or "—"
+        row["QA Date"] = p.qa_date or "—"
+        row["QA Stat"] = p.qa_status or "—"
         for col_label, field in lifecycle_columns:
-            status = lifecycle.get(field, config.STATUS_NOT_REQUIRED)
+            status = p.lifecycle.get(field, config.STATUS_NOT_REQUIRED)
             row[col_label] = display.status_table_cell(status)
         row["Final Status"] = p.final_status
         rows.append(row)
-    df = pd.DataFrame(rows)
-    if any(p.manual_status_override for p in patches):
-        df["System Status"] = [p.system_status if p.manual_status_override else "—" for p in patches]
-    return df
+    return pd.DataFrame(rows)
 
 
 def _inject_table_styles() -> None:
@@ -177,17 +207,21 @@ def _inject_table_styles() -> None:
         """
         <style>
             [data-testid="stDataFrame"] { font-size: 0.92rem; }
-            [data-testid="stDataFrame"] div[data-testid="glideDataEditor"] {
-                font-family: inherit;
-            }
             .pl-branch-heading {
-                background: #f0f2f6;
+                background: var(--secondary-background-color, #e8eaef);
+                color: var(--text-color, #31333f);
                 border-left: 4px solid #ff4b4b;
                 padding: 0.4rem 0.85rem;
                 border-radius: 0.35rem;
                 margin: 1.1rem 0 0.35rem 0;
                 font-weight: 650;
                 font-size: 1.05rem;
+            }
+            [data-theme="dark"] .pl-branch-heading,
+            .stApp[data-theme="dark"] .pl-branch-heading {
+                background: #2d2f38;
+                color: #fafafa;
+                border-left-color: #ff6b6b;
             }
         </style>
         """,
@@ -205,16 +239,27 @@ def _render_branch_section(
     branch_patches: list[repository.PatchSummary],
     *,
     view_key: str,
+    side_filter: str,
 ) -> None:
     st.markdown(
         f'<div class="pl-branch-heading">{branch_name}</div>',
         unsafe_allow_html=True,
     )
-    df = _patches_to_dataframe(branch_patches)
-    table_key = f"pl_table_{view_key}_{_branch_table_key(branch_name)}"
+    df = _patches_to_dataframe(branch_patches, side_filter=side_filter)
+    row_tones = [
+        patch_row_tone(
+            lifecycle=p.lifecycle,
+            manual_status_override=p.manual_status_override,
+            patch_side=p.patch_side,
+            side_filter=side_filter,
+        )
+        for p in branch_patches
+    ]
+    styled_df = display.style_patch_dataframe(df, row_tones)
+    table_key = f"pl_table_{view_key}_{side_filter}_{_branch_table_key(branch_name)}"
 
     selection = st.dataframe(
-        df,
+        styled_df,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
@@ -238,17 +283,20 @@ def _render_branch_section(
     with c2:
         if selected_rows:
             p = branch_patches[selected_rows[0]]
-            st.caption(
-                f"Selected: **{p.patch_id}** — {p.final_status} · "
-                f"Release {display.status_cell(p.lifecycle.get(config.LIFECYCLE_FIELD_RELEASE_BRANCH, ''))} · "
-                f"Prod {display.status_cell(p.lifecycle.get(config.LIFECYCLE_FIELD_PROD_BRANCH, ''))} · "
-                f"Production {display.status_cell(p.lifecycle.get(config.LIFECYCLE_FIELD_PRODUCTION, ''))} · "
-                f"Stage Q {display.status_cell(p.lifecycle.get(config.LIFECYCLE_FIELD_STAGE_QUERY, ''))} · "
-                f"UAT Q {display.status_cell(p.lifecycle.get(config.LIFECYCLE_FIELD_UAT_QUERY, ''))}"
+            lifecycle_columns = display.lifecycle_table_columns(side_filter)
+            preview = " · ".join(
+                f"{label} {display.status_cell(p.lifecycle.get(field, ''))}"
+                for label, field in lifecycle_columns[:5]
             )
+            st.caption(f"Selected: **{p.patch_id}** — {p.final_status} · {preview}")
 
 
-def _render_patch_table(patches: list[repository.PatchSummary], *, empty: str) -> None:
+def _render_patch_table(
+    patches: list[repository.PatchSummary],
+    *,
+    empty: str,
+    side_filter: str,
+) -> None:
     if not patches:
         st.info(empty)
         return
@@ -259,30 +307,127 @@ def _render_patch_table(patches: list[repository.PatchSummary], *, empty: str) -
     view_key = st.session_state.get(_VIEW_KEY, "list")
     branch_groups = group_by_branch_name(patches, branch_getter=lambda p: p.branch_name)
     for branch_name, branch_patches in branch_groups:
-        _render_branch_section(branch_name, branch_patches, view_key=view_key)
+        _render_branch_section(
+            branch_name,
+            branch_patches,
+            view_key=view_key,
+            side_filter=side_filter,
+        )
+
+
+def _subfilter_all_label(patch_type: str) -> str:
+    if patch_type == config.PATCH_TYPE_DEMO_UAT:
+        return "All UAT patches"
+    if patch_type == config.PATCH_TYPE_RELEASE:
+        return "All release branches"
+    if patch_type in (config.PATCH_TYPE_WEEKLY, config.PATCH_TYPE_URGENT):
+        return "All branches"
+    return "All"
+
+
+def _subfilter_pending_label(patch_type: str) -> str:
+    if patch_type == config.PATCH_TYPE_DEMO_UAT:
+        return "Pending UAT patches"
+    return "Pending only"
+
+
+def _subfilter_options(patch_type: str, side_filter: str) -> list[tuple[str, str]]:
+    """Return (display label, value) pairs for the type sub-filter dropdown."""
+    options: list[tuple[str, str]] = [
+        (_subfilter_all_label(patch_type), config.SUBFILTER_ALL),
+        (_subfilter_pending_label(patch_type), config.SUBFILTER_PENDING),
+    ]
+    for branch in repository.list_distinct_branches_for_type(
+        patch_type=patch_type,
+        side_filter=side_filter,
+    ):
+        options.append((branch, branch))
+    return options
+
+
+def _parse_subfilter(sub_value: str) -> tuple[str | None, bool]:
+    """Map sub-filter value to branch name and whether pending-only applies."""
+    if sub_value == config.SUBFILTER_ALL:
+        return None, False
+    if sub_value == config.SUBFILTER_PENDING:
+        return None, True
+    return sub_value, False
 
 
 def _render_list(*, pending_only: bool) -> None:
+    side_filter = _side_filter()
     st.subheader("Pending follow-ups" if pending_only else "All patches")
-    f1, f2 = st.columns(2)
+    f1, f2, f3 = st.columns([1.1, 1.1, 1.2])
     with f1:
         type_filter = st.selectbox(
-            "Filter by type",
+            "Patch type",
             options=["All"] + list(config.PATCH_TYPES),
-            key=f"pl_filter_type_{pending_only}",
+            key=f"pl_filter_type_{pending_only}_{side_filter}",
         )
     with f2:
-        dev_filter = st.text_input("Filter by developer", key=f"pl_filter_dev_{pending_only}")
+        sub_value = config.SUBFILTER_ALL
+        if type_filter != "All":
+            sub_choices = _subfilter_options(type_filter, side_filter)
+            sub_labels = [label for label, _ in sub_choices]
+            sub_values = {label: value for label, value in sub_choices}
+            sub_label = st.selectbox(
+                "Scope",
+                options=sub_labels,
+                key=f"pl_filter_sub_{pending_only}_{side_filter}_{type_filter}",
+            )
+            sub_value = sub_values[sub_label]
+        else:
+            st.selectbox(
+                "Scope",
+                options=["All types"],
+                disabled=True,
+                key=f"pl_filter_sub_disabled_{pending_only}_{side_filter}",
+            )
+    with f3:
+        dev_filter = st.text_input(
+            "Developer",
+            placeholder="Name (case insensitive)",
+            key=f"pl_filter_dev_{pending_only}_{side_filter}",
+        )
 
+    branch_filter, require_pending = _parse_subfilter(sub_value)
     patches = repository.list_patches(
         patch_type=None if type_filter == "All" else type_filter,
         developer=dev_filter.strip() or None,
+        branch_name=branch_filter,
         pending_only=pending_only,
+        require_pending=require_pending and type_filter != "All",
+        side_filter=side_filter,
     )
     _render_patch_table(
         patches,
         empty="No patches yet." if not pending_only else "No pending follow-ups.",
+        side_filter=side_filter,
     )
+
+
+def _render_lifecycle_section(
+    patch: repository.PatchDetail,
+    section_title: str,
+    columns: tuple[tuple[str, str], ...],
+    track: str,
+) -> dict[str, str]:
+    st.markdown(f"#### {section_title}")
+    values: dict[str, str] = {}
+    fields = lifecycle_fields_for_track(track)
+    closure_field = closure_field_for_track(track)
+    ordered = [f for _, f in columns] + [closure_field]
+
+    for field in ordered:
+        label = next((lbl for lbl, fld in columns if fld == field), "Closure")
+        current = patch.lifecycle.get(field, config.STATUS_PENDING)
+        values[field] = st.selectbox(
+            f"{display.status_icon(current)} {label}",
+            options=list(config.LIFECYCLE_STATUSES),
+            index=list(config.LIFECYCLE_STATUSES).index(current),
+            key=f"lc_{patch.id}_{track}_{field}",
+        )
+    return values
 
 
 def _render_detail() -> None:
@@ -303,7 +448,9 @@ def _render_detail() -> None:
         st.markdown("🔴 **Urgent hotfix** — highlighted until closed")
 
     final = patch.manual_status_override or patch.system_status
-    st.markdown(f"**Final status:** {final}")
+    st.markdown(
+        f"**Final status:** {final} · **Side:** {display.patch_side_label(patch.patch_side)}"
+    )
     if patch.manual_status_override:
         st.markdown(f"**System status:** {patch.system_status}")
     if patch.jira_url:
@@ -326,21 +473,14 @@ def _render_detail() -> None:
 
     st.divider()
     st.markdown("### Lifecycle")
-    new_lifecycle: dict[str, str] = {}
-    field_labels = {f: label for label, f in display.lifecycle_table_columns()}
-    field_labels[config.LIFECYCLE_FIELD_CLOSURE] = "Closure"
-    ordered_fields = [f for _, f in display.lifecycle_table_columns()] + [
-        config.LIFECYCLE_FIELD_CLOSURE
-    ]
-    for field in ordered_fields:
-        label = field_labels.get(field, field.replace("_", " ").title())
-        current = patch.lifecycle.get(field, config.STATUS_PENDING)
-        new_lifecycle[field] = st.selectbox(
-            f"{display.status_icon(current)} {label}",
-            options=list(config.LIFECYCLE_STATUSES),
-            index=list(config.LIFECYCLE_STATUSES).index(current),
-            key=f"lc_{patch.id}_{field}",
+    new_lifecycle: dict[str, str] = dict(patch.lifecycle)
+    for section_title, columns in display.detail_lifecycle_sections(patch.patch_side):
+        track = (
+            config.PATCH_SIDE_WM
+            if section_title.startswith("WM")
+            else config.PATCH_SIDE_FC
         )
+        new_lifecycle.update(_render_lifecycle_section(patch, section_title, columns, track))
 
     override_options = ["(none)"] + list(config.MANUAL_STATUS_OVERRIDES)
     current_override = patch.manual_status_override or "(none)"
@@ -355,11 +495,20 @@ def _render_detail() -> None:
 
     if st.button("Save lifecycle", type="primary"):
         try:
-            if new_lifecycle.get(config.LIFECYCLE_FIELD_CLOSURE) == config.STATUS_COMPLETED:
-                ok, blocking = can_close(new_lifecycle)
-                if not ok:
-                    st.error(f"Cannot close — incomplete: {', '.join(blocking)}")
-                    st.stop()
+            if patch.patch_side in (config.PATCH_SIDE_FC, config.PATCH_SIDE_BOTH):
+                closure_field = closure_field_for_track(config.PATCH_SIDE_FC)
+                if new_lifecycle.get(closure_field) == config.STATUS_COMPLETED:
+                    ok, blocking = can_close(new_lifecycle, track=config.PATCH_SIDE_FC)
+                    if not ok:
+                        st.error(f"Cannot close FC track — incomplete: {', '.join(blocking)}")
+                        st.stop()
+            if patch.patch_side in (config.PATCH_SIDE_WM, config.PATCH_SIDE_BOTH):
+                closure_field = closure_field_for_track(config.PATCH_SIDE_WM)
+                if new_lifecycle.get(closure_field) == config.STATUS_COMPLETED:
+                    ok, blocking = can_close(new_lifecycle, track=config.PATCH_SIDE_WM)
+                    if not ok:
+                        st.error(f"Cannot close WM track — incomplete: {', '.join(blocking)}")
+                        st.stop()
             repository.update_lifecycle(
                 patch.id,
                 new_lifecycle,
@@ -390,6 +539,7 @@ def render() -> None:
     db.init_db()
     st.title("Patch Lifecycle")
     st.caption("Patch registry and lifecycle tracker (local SQLite).")
+    _render_side_toggle()
     _render_operator_bar()
     _render_nav()
 

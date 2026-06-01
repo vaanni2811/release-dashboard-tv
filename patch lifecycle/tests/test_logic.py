@@ -10,9 +10,14 @@ from logic import (
     branch_sort_key,
     can_close,
     compute_initial_lifecycle,
+    compute_patch_side,
     compute_system_status,
     group_by_branch_name,
+    is_track_closed,
+    is_wm_repo,
     merge_lifecycle_on_type_change,
+    normalize_repo_name,
+    patch_row_tone,
     resolve_patch_status_display,
     validate_status_transition,
 )
@@ -131,6 +136,111 @@ class TestBranchGrouping(unittest.TestCase):
         groups = group_by_branch_name(items, branch_getter=lambda x: x["branch"])
         self.assertEqual([name for name, _ in groups], ["hotfix_r26q2.15", "hotfix_r26q2.8"])
         self.assertEqual([i["id"] for i in groups[0][1]], [2, 3])
+
+
+class TestPatchSide(unittest.TestCase):
+    def test_wm_repo_shorthand(self) -> None:
+        self.assertEqual(normalize_repo_name("ng"), "platform-ng")
+        self.assertTrue(is_wm_repo("bifrost"))
+
+    def test_fc_only_repos(self) -> None:
+        self.assertEqual(compute_patch_side(["fcsky", "fcsky-ui"]), config.PATCH_SIDE_FC)
+
+    def test_wm_only_repos(self) -> None:
+        self.assertEqual(compute_patch_side(["bifrost", "deckard"]), config.PATCH_SIDE_WM)
+
+    def test_both_sides(self) -> None:
+        self.assertEqual(
+            compute_patch_side(["fcsky", "bifrost"]),
+            config.PATCH_SIDE_BOTH,
+        )
+
+    def test_wm_hotfix_defaults(self) -> None:
+        lc = compute_initial_lifecycle(
+            CreatePatchOptions(
+                config.PATCH_TYPE_WEEKLY,
+                patch_side=config.PATCH_SIDE_WM,
+                has_queries=True,
+            )
+        )
+        self.assertEqual(
+            lc[config.WM_LIFECYCLE_FIELD_HOTFIX_BRANCH],
+            config.STATUS_PENDING,
+        )
+        self.assertEqual(
+            lc[config.LIFECYCLE_FIELD_PRODUCTION],
+            config.STATUS_NOT_REQUIRED,
+        )
+
+    def test_both_side_gets_fc_and_wm_defaults(self) -> None:
+        lc = compute_initial_lifecycle(
+            CreatePatchOptions(
+                config.PATCH_TYPE_WEEKLY,
+                patch_side=config.PATCH_SIDE_BOTH,
+                has_queries=False,
+            )
+        )
+        self.assertEqual(lc[config.LIFECYCLE_FIELD_PRODUCTION], config.STATUS_PENDING)
+        self.assertEqual(
+            lc[config.WM_LIFECYCLE_FIELD_MASTER_PRODUCTION],
+            config.STATUS_PENDING,
+        )
+
+
+class TestPatchRowTone(unittest.TestCase):
+    def test_cancelled_override_is_negative(self) -> None:
+        tone = patch_row_tone(
+            lifecycle={config.LIFECYCLE_FIELD_CLOSURE: config.STATUS_PENDING},
+            manual_status_override="Cancelled",
+            patch_side=config.PATCH_SIDE_FC,
+            side_filter=config.SIDE_FILTER_FC,
+        )
+        self.assertEqual(tone, "negative")
+
+    def test_reverted_override_is_negative(self) -> None:
+        tone = patch_row_tone(
+            lifecycle={config.LIFECYCLE_FIELD_CLOSURE: config.STATUS_COMPLETED},
+            manual_status_override="Reverted",
+            patch_side=config.PATCH_SIDE_FC,
+            side_filter=config.SIDE_FILTER_FC,
+        )
+        self.assertEqual(tone, "negative")
+
+    def test_fc_track_closed_is_complete(self) -> None:
+        lifecycle = {config.LIFECYCLE_FIELD_CLOSURE: config.STATUS_COMPLETED}
+        self.assertTrue(is_track_closed(lifecycle, config.PATCH_SIDE_FC))
+        tone = patch_row_tone(
+            lifecycle=lifecycle,
+            manual_status_override=None,
+            patch_side=config.PATCH_SIDE_FC,
+            side_filter=config.SIDE_FILTER_FC,
+        )
+        self.assertEqual(tone, "complete")
+
+    def test_both_side_needs_both_tracks_on_all_tab(self) -> None:
+        fc_only_closed = {
+            config.LIFECYCLE_FIELD_CLOSURE: config.STATUS_COMPLETED,
+            config.WM_LIFECYCLE_FIELD_CLOSURE: config.STATUS_PENDING,
+        }
+        tone = patch_row_tone(
+            lifecycle=fc_only_closed,
+            manual_status_override=None,
+            patch_side=config.PATCH_SIDE_BOTH,
+            side_filter=config.SIDE_FILTER_ALL,
+        )
+        self.assertIsNone(tone)
+
+        both_closed = {
+            config.LIFECYCLE_FIELD_CLOSURE: config.STATUS_COMPLETED,
+            config.WM_LIFECYCLE_FIELD_CLOSURE: config.STATUS_COMPLETED,
+        }
+        tone = patch_row_tone(
+            lifecycle=both_closed,
+            manual_status_override=None,
+            patch_side=config.PATCH_SIDE_BOTH,
+            side_filter=config.SIDE_FILTER_ALL,
+        )
+        self.assertEqual(tone, "complete")
 
 
 if __name__ == "__main__":

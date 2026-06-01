@@ -363,6 +363,128 @@ One row per patch (1:1 in MVP).
 
 **Out of scope v1:** Sheet import, Jira import, Slack, Excel export, Jira/PR sync, multi-user auth.
 
+## Environment / side support (FC and WM)
+
+Patch Lifecycle supports two patch sides/environments in one database:
+
+1. **FC** — FranConnect sky-side repositories and lifecycle
+2. **WM** — WM platform repositories and branch flow
+
+### Top-level UI toggle
+
+On the Patch Lifecycle page:
+
+**FC Patches | WM Patches | All Patches**
+
+Same SQLite database for both. A patch can be:
+
+- **FC only** — FC repositories only
+- **WM only** — WM repositories only
+- **Both** — mixed FC + WM repos; appears under **FC Patches** and **WM Patches**
+
+### Routing rule
+
+On create/import, inspect repository names:
+
+| Repos | `patch_side` |
+| ----- | ------------ |
+| WM repo list only | `wm` |
+| Non-WM only | `fc` |
+| WM + non-WM | `both` |
+
+### WM repositories
+
+Canonical WM repos (with shorthands in `config.WM_REPO_SHORTHANDS`):
+
+- `platform` (`platform-ng`, `ng`)
+- `platform-og` (`og`)
+- `bifrost`, `deckard`, `deepthought`, `megamind`, `mater`
+- `platform-icons` (`icons`)
+- `hedwig`, `devops`
+
+### WM patch types
+
+Same set as FC:
+
+1. Urgent Hotfix
+2. Weekly Hotfix
+3. Demo UAT Patch
+4. Release Patch
+5. DB Query Patch
+6. Configuration Patch
+
+### WM branch flow (hotfix / urgent / weekly / demo UAT)
+
+1. Commit to `hotfix_r26q…`
+2. Live day: merge hotfix → **master** (= Production)
+3. Carry forward to **release branch**
+4. Carry forward to **wm-fc-integration-prod** (Stage)
+5. Carry forward to **UAT branch**
+
+### WM hotfix lifecycle defaults
+
+| Step | Default |
+| ---- | ------- |
+| Hotfix branch committed | Pending |
+| Master merged / Production deployed | Pending |
+| Release branch updated | Pending |
+| WM-FC Integration Prod / Stage updated | Pending |
+| UAT branch updated | Pending |
+| Stage query | Pending if queries exist, else Not Required |
+| UAT query | Pending if queries exist, else Not Required |
+| QA verified | Pending |
+
+### WM release patch flow
+
+1. Patch is part of release branch
+2. Must reach **wm-fc-integration-prod** (Stage)
+3. Must reach **UAT branch**
+4. Queries: Stage then UAT (if any)
+5. QA verification before closure
+
+### WM release patch lifecycle defaults
+
+| Step | Default |
+| ---- | ------- |
+| Production / master merged | Not Required initially |
+| Release branch updated | Pending if not already in release |
+| WM-FC Integration / Stage | Pending |
+| UAT branch | Pending |
+| Stage / UAT query | Pending if queries exist |
+| QA verified | Pending |
+
+### WM lifecycle fields (DB columns)
+
+- Hotfix Branch Committed → `wm_hotfix_branch_status`
+- Master Merged / Production Deployed → `wm_master_production_status`
+- Release Branch Updated → `wm_release_branch_status`
+- WM-FC Integration Prod / Stage → `wm_integration_stage_status`
+- UAT Branch Updated → `wm_uat_branch_status`
+- Stage Query Executed → `wm_stage_query_status`
+- UAT Query Executed → `wm_uat_query_status`
+- QA Verified → `wm_qa_verification_status`
+- Closed → `wm_closure_status`
+
+### Listing columns (by tab)
+
+**FC Patches / WM Patches:** side-specific lifecycle columns + Patch ID, Type, Details, Repos, Branch, QA Date, QA Status, Developer, Final Status.
+
+**All Patches:** adds **Side** column (FC / WM / Both).
+
+Patches with **Both** show FC lifecycle columns on FC tab and WM lifecycle columns on WM tab; detail view shows **both** lifecycle sections.
+
+### WM business rules
+
+1. WM patches cannot close until required branch carry-forward steps are done
+2. WM hotfix: master merge = Production deployed
+3. After master merge, release / integration / UAT branch steps stay Pending until completed
+4. WM release patches require Stage and UAT branch updates
+5. Stage query before UAT query when queries exist
+6. WM urgent patches highlighted until closed
+7. **Both** patches: FC and WM lifecycle tracking visible on detail
+
+---
+
 ## Google Sheet import (v2)
 
 Source workbook: **FCSKY Production Upload** (and related tabs e.g. `FCSKY`, `UAT_Pending` — confirm per import).
@@ -435,6 +557,7 @@ Record answers here as product owner confirms:
 | 4 | `current_status` — manual vs computed | **C** — `system_status` computed; optional `manual_status_override`; UI shows both when override set |
 | 5 | User identity for created_by / activity (free text vs dropdown) | **B** — Dropdown from `config.OPERATORS` (pilot: Vanni Chaudhary, Tanisha Rawat); sidebar selection drives created/updated/activity |
 | 6 | Google Sheet columns mapping (for v2) | **Done** — see [Google Sheet import (v2)](#google-sheet-import-v2) |
+| 7 | FC / WM environment support | **Done** — see [Environment / side support (FC and WM)](#environment--side-support-fc-and-wm) |
 
 ## Execution
 
