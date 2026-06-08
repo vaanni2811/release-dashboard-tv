@@ -6,8 +6,34 @@ from __future__ import annotations
 SRE_TYPE_WEEKLY = "Weekly Production Patch"
 SRE_TYPE_URGENT = "Urgent Production Patch"
 SRE_TYPE_UAT = "DEMO/MBE UAT Patch"
+SRE_TYPE_MONTHLY = "Monthly Release Ticket"
 
-SRE_TYPES: tuple[str, ...] = (SRE_TYPE_WEEKLY, SRE_TYPE_URGENT, SRE_TYPE_UAT)
+SRE_TYPES: tuple[str, ...] = (
+    SRE_TYPE_WEEKLY,
+    SRE_TYPE_URGENT,
+    SRE_TYPE_UAT,
+    SRE_TYPE_MONTHLY,
+)
+
+RELEASE_CODES: tuple[str, ...] = ("R24", "R25", "R26", "R27", "R28")
+RELEASE_QUARTERS: tuple[str, ...] = ("Q1", "Q2", "Q3", "Q4")
+RELEASE_YEARS: tuple[int, ...] = (2025, 2026, 2027, 2028)
+RELEASE_MONTHS: tuple[str, ...] = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+YES_NA_OPTIONS: tuple[str, ...] = ("NA", "yes")
 
 # Repos listed in the form but omitted entirely from generated SRE tickets.
 EXCLUDED_FROM_SRE_REPOS: frozenset[str] = frozenset(
@@ -38,6 +64,12 @@ DIRECT_SYNC_REPOS: frozenset[str] = frozenset(
     }
 )
 
+# Monthly release only — separate serverless sync section (non-monthly → direct sync).
+SERVERLESS_REPOS: frozenset[str] = frozenset({"fcsky-auth-server"})
+
+# Monthly release only — covered by dedicated FJS / FJS Threads sections (not MSA Work).
+MONTHLY_FJS_REPOS: frozenset[str] = frozenset({"fjssky", "fjssky-lib"})
+
 # Shorthand / typo → canonical repo name (lowercase keys).
 SHORTHAND_MAPPING: dict[str, str] = {
     "cc": "fcsky-commandcenter-service",
@@ -67,6 +99,7 @@ SHORTHAND_MAPPING: dict[str, str] = {
     "tenant-config": "fcsky-tenant-config",
     "integration-auth": "integration-auth-service",
     "auth": "integration-auth-service",
+    "fjs": "fjssky",
 }
 
 # Default cache update when the user leaves the field unspecified.
@@ -74,6 +107,7 @@ DEFAULT_CACHE_UPDATE: dict[str, bool] = {
     SRE_TYPE_WEEKLY: True,
     SRE_TYPE_URGENT: False,
     SRE_TYPE_UAT: True,
+    SRE_TYPE_MONTHLY: True,
 }
 
 DEFAULT_FLUSH_MSA_CACHE: bool = True

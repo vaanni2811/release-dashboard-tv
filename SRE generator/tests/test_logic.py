@@ -13,10 +13,12 @@ from logic import (
     classify_repo,
     format_full_ticket,
     generate_ticket,
+    is_serverless_repo,
     normalize_repo_name,
     parse_backup_table_names,
     parse_repo_lines,
 )
+from monthly_template import MonthlyReleaseFields
 
 
 class TestShorthand(unittest.TestCase):
@@ -157,10 +159,62 @@ class TestClassification(unittest.TestCase):
 
         self.assertEqual(classify_repo("fcsky-ui"), RepoBucket.DIRECT_SYNC)
 
-    def test_serverless_suffix(self) -> None:
+    def test_serverless_suffix_non_monthly(self) -> None:
         from logic import RepoBucket
 
         self.assertEqual(classify_repo("foo-serverless"), RepoBucket.DIRECT_SYNC)
+
+    def test_serverless_suffix_monthly_bucket(self) -> None:
+        from logic import RepoBucket
+
+        self.assertEqual(
+            classify_repo("foo-serverless", sre_type=config.SRE_TYPE_MONTHLY),
+            RepoBucket.SERVERLESS,
+        )
+
+    def test_auth_server_monthly_vs_weekly(self) -> None:
+        from logic import RepoBucket
+
+        self.assertEqual(
+            classify_repo("fcsky-auth-server", sre_type=config.SRE_TYPE_MONTHLY),
+            RepoBucket.SERVERLESS,
+        )
+        self.assertEqual(classify_repo("fcsky-auth-server"), RepoBucket.DIRECT_SYNC)
+
+    def test_monthly_repo_segregation(self) -> None:
+        lines = [
+            "fcsky-ui",
+            "fcsky-tenant-config",
+            "kb-entity-sync-serverless",
+            "fcsky-auth-server",
+            "integration-auth-service",
+        ]
+        c = classify_repos(parse_repo_lines(lines), config.SRE_TYPE_MONTHLY)
+        self.assertEqual(c.direct_sync, ("fcsky-ui",))
+        self.assertEqual(c.msa, ("fcsky-tenant-config",))
+        self.assertEqual(
+            c.serverless,
+            ("kb-entity-sync-serverless", "fcsky-auth-server"),
+        )
+        self.assertEqual(c.integration, ("integration-auth-service",))
+
+    def test_monthly_fjs_repos_excluded_from_msa(self) -> None:
+        lines = ["fcsky-tenant-config", "fjssky", "fjssky-lib", "fjs", "fjssky:26.0.0-1253"]
+        c = classify_repos(parse_repo_lines(lines), config.SRE_TYPE_MONTHLY)
+        self.assertEqual(c.msa, ("fcsky-tenant-config",))
+
+    def test_parse_repo_lines_strips_image_tag(self) -> None:
+        entries = parse_repo_lines(["fcsky-tenant-config:prod_951f3ff_588", "fjssky:26.0.0-1253"])
+        self.assertEqual(entries, [("fcsky-tenant-config", False), ("fjssky", False)])
+
+    def test_weekly_serverless_in_direct_sync(self) -> None:
+        lines = ["fcsky-ui", "kb-entity-sync-serverless", "fcsky-auth-server"]
+        c = classify_repos(parse_repo_lines(lines), config.SRE_TYPE_WEEKLY)
+        self.assertEqual(c.serverless, ())
+        self.assertEqual(
+            c.direct_sync,
+            ("fcsky-ui", "kb-entity-sync-serverless", "fcsky-auth-server"),
+        )
 
     def test_integration_stage_repos(self) -> None:
         from logic import RepoBucket
@@ -369,6 +423,267 @@ class TestDefaults(unittest.TestCase):
             parse_backup_table_names("SUMMARY_DISPLAY, FEATURE_CONFIGURATION"),
             ("SUMMARY_DISPLAY", "FEATURE_CONFIGURATION"),
         )
+
+
+def _sample_monthly_fields(**overrides) -> MonthlyReleaseFields:
+    base = dict(
+        release_code="R26",
+        year=2026,
+        month="March",
+        quarter_label="R26Q2",
+        date_range_display="March/11 - March/14, 2026",
+        day_1_date="Mar/11, 2026",
+        day_2_date="Mar/12, 2026",
+        day_3_date="Mar/14, 2026",
+        release_doc_suffix="R26 March Release document (March/11 - March/14, 2026)",
+        form_generator_work="NA",
+        form_generator_backup_table="",
+        form_generator_query="",
+        release_doc_link="https://example.com/plan",
+        fcsky_config="NA",
+        fcsky_config_details="",
+        msa_config="NA",
+        msa_config_details="",
+        sso_enabled=False,
+        sso_date="",
+        sso_rpms="",
+        patch_queries="NA",
+        patch_queries_text="",
+        release_query_path="FranConnect/DBScripts/UpgradeScripts/R26/mar26/mar26.sql",
+        production_specific="NA",
+        production_specific_text="",
+        fc_go_specific="NA",
+        fc_go_specific_text="",
+        intl_cluster_queries="",
+        intl_sql_file="",
+        rest_cluster_date="",
+        ref_sre_link="",
+        pg_schema_path="",
+        pg_patch="NA",
+        pg_patch_text="",
+        mongo="NA",
+        mongo_path="",
+        jobs_db="NA",
+        jobs_db_text="",
+        porting_jsp="NA",
+        jsp_path="",
+        audit_form="NA",
+        bootstrapping="NA",
+        bootstrapping_text="",
+        fjs_changes="NA",
+        fjs_rpm="",
+        fjs_lib_rpm="",
+        fjs_include_lib=False,
+        fjs_date="",
+        fjs_threads="NA",
+        fjs_threads_date="",
+        fjs_threads_ref="",
+        base_ami="NA",
+        base_ami_ref="",
+        solr="NA",
+        solr_date="",
+        solr_ref="",
+    )
+    base.update(overrides)
+    return MonthlyReleaseFields(**base)
+
+
+class TestMonthlyRelease(unittest.TestCase):
+    def test_title_format(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Mar/11 - Mar/14, 2026",
+            repo_lines=["fcsky-ui"],
+            fcsky_rpm="17.1.1-4092",
+            basethreads_fcsky_rpm="17.1.1-4092",
+            monthly=_sample_monthly_fields(),
+        )
+        ticket = generate_ticket(data)
+        self.assertEqual(
+            ticket.title,
+            "R26 March Release on Production with Patches | March/11 - March/14, 2026",
+        )
+
+    def test_standard_month_timings(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Mar/11 - Mar/14, 2026",
+            repo_lines=[],
+            monthly=_sample_monthly_fields(month="March"),
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("EMEA Cluster: 7:30 AM", ticket.description)
+        self.assertIn("PROD-USA, API, Cluster 1, Cluster 2: 8:30 AM", ticket.description)
+        self.assertIn("INTL Clusters: 8:30 AM IST", ticket.description)
+
+    def test_winter_month_timings(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Feb/11 - Feb/14, 2026",
+            repo_lines=[],
+            monthly=_sample_monthly_fields(month="February"),
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("EMEA Cluster: 8:30 AM", ticket.description)
+        self.assertIn("APAC Cluster: 5:30 PM", ticket.description)
+        self.assertIn("INTL Clusters: 9:30 AM IST", ticket.description)
+
+    def test_direct_sync_msa_serverless_sections(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Mar/11 - Mar/14, 2026",
+            repo_lines=[
+                "fcsky-ui",
+                "fcsky-tenant-config:prod_951f3ff_588",
+                "kb-entity-sync-serverless",
+                "fcsky-auth-server",
+            ],
+            fcsky_rpm="17.1.1-4092",
+            basethreads_fcsky_rpm="17.1.1-4092",
+            monthly=_sample_monthly_fields(),
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("Direct sync:", ticket.description)
+        self.assertIn("fcsky-ui", ticket.description)
+        self.assertNotIn("fcsky-auth-server", ticket.description.split("Direct sync")[1].split("serverless")[0])
+        self.assertIn("MSA Work:", ticket.description)
+        self.assertIn("fcsky-tenant-config:prod_951f3ff_588", ticket.description)
+        self.assertIn("serverless sync list:", ticket.description)
+        self.assertIn("kb-entity-sync-serverless", ticket.description)
+        self.assertIn("fcsky-auth-server", ticket.description)
+        self.assertIn("Release Panthers Team", ticket.description)
+
+    def test_is_serverless_repo(self) -> None:
+        self.assertTrue(is_serverless_repo("kb-entity-sync-serverless"))
+        self.assertTrue(is_serverless_repo("fcsky-auth-server"))
+        self.assertFalse(is_serverless_repo("fcsky-ui"))
+
+    def test_rpm_lines_empty_fcsky_bt(self) -> None:
+        from monthly_template import _rpm_lines
+
+        self.assertEqual(_rpm_lines("", "", ""), ["FCSKY: ", "BT: "])
+
+    def test_rpm_lines_with_versions(self) -> None:
+        from monthly_template import _rpm_lines
+
+        lines = _rpm_lines("17.1.1-4304", "17.1.1-4304", "")
+        self.assertEqual(lines, ["FCSKY: FCSKY-17.1.1-4304", "BT: BaseThreadsFCSKY-17.1.1-4304"])
+
+    def test_fjs_changes_with_lib_rpm(self) -> None:
+        from monthly_template import build_monthly_description
+
+        fields = _sample_monthly_fields(
+            fjs_changes="yes",
+            fjs_date="Jan/10, 2026",
+            fjs_rpm="17.0.0-1155",
+            fjs_lib_rpm="17.0.0.00-87",
+            fjs_include_lib=True,
+        )
+        desc = build_monthly_description(
+            fields,
+            fcsky_rpm="",
+            basethreads_rpm="",
+            tomcat_rpm="",
+            msa_lines=[],
+            integration_lines=[],
+            direct_sync_repos=(),
+            serverless_repos=(),
+            mysql_blocks=[],
+            psql_blocks=[],
+        )
+        self.assertIn("FJS Changes: Yes, process on Jan/10, 2026", desc)
+        self.assertNotIn("FJS Changes: yes\n", desc.lower())
+        self.assertEqual(desc.lower().count("fjs changes:"), 1)
+        self.assertIn(
+            "Kindly upload the FJSSKY and fjssky-lib rpm to production from prod branch",
+            desc,
+        )
+        self.assertIn("FJSSKY-LIB-17.0.0.00-87", desc)
+        self.assertIn("FJSSky-17.0.0-1155", desc)
+
+    def test_fjs_changes_with_lib_empty_rpm_prefixes(self) -> None:
+        from monthly_template import build_monthly_description
+
+        fields = _sample_monthly_fields(
+            fjs_changes="yes",
+            fjs_date="Jan/10, 2026",
+            fjs_rpm="",
+            fjs_lib_rpm="",
+            fjs_include_lib=True,
+        )
+        desc = build_monthly_description(
+            fields,
+            fcsky_rpm="",
+            basethreads_rpm="",
+            tomcat_rpm="",
+            msa_lines=[],
+            integration_lines=[],
+            direct_sync_repos=(),
+            serverless_repos=(),
+            mysql_blocks=[],
+            psql_blocks=[],
+        )
+        block = (
+            "Kindly upload the FJSSKY and fjssky-lib rpm to production from prod branch\n"
+            "FJSSKY-LIB-\n"
+            "FJSSky-"
+        )
+        self.assertIn(block, desc)
+
+    def test_fjs_changes_without_lib(self) -> None:
+        from monthly_template import build_monthly_description
+
+        fields = _sample_monthly_fields(
+            fjs_changes="yes",
+            fjs_date="Jan/10, 2026",
+            fjs_rpm="17.0.0-1155",
+            fjs_include_lib=False,
+        )
+        desc = build_monthly_description(
+            fields,
+            fcsky_rpm="",
+            basethreads_rpm="",
+            tomcat_rpm="",
+            msa_lines=[],
+            integration_lines=[],
+            direct_sync_repos=(),
+            serverless_repos=(),
+            mysql_blocks=[],
+            psql_blocks=[],
+        )
+        self.assertIn(
+            "Kindly upload the FJSSKY rpm to production from prod branch\nFJSSky-17.0.0-1155",
+            desc,
+        )
+        self.assertNotIn("FJSSKY-LIB", desc)
+        self.assertNotIn("fjssky-lib rpm", desc)
+
+    def test_monthly_fjs_repos_omitted_from_msa_work(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Mar/11 - Mar/14, 2026",
+            repo_lines=["fcsky-tenant-config", "fjssky:26.0.0-1253", "fjssky-lib"],
+            monthly=_sample_monthly_fields(),
+        )
+        ticket = generate_ticket(data)
+        self.assertIn("MSA Work:", ticket.description)
+        self.assertIn("fcsky-tenant-config:", ticket.description)
+        msa_section = ticket.description.split("MSA Work:")[1].split("Direct sync:")[0]
+        self.assertNotIn("fjssky", msa_section)
+
+    def test_monthly_rpm_section_without_versions(self) -> None:
+        data = SREInput(
+            sre_type=config.SRE_TYPE_MONTHLY,
+            date_display="Mar/11 - Mar/14, 2026",
+            repo_lines=[],
+            monthly=_sample_monthly_fields(),
+        )
+        ticket = generate_ticket(data)
+        self.assertIn(
+            "RPM upload branch details: prod branch from stage server to production server.",
+            ticket.description,
+        )
+        self.assertIn("FCSKY: \nBT: ", ticket.description.replace("\r\n", "\n"))
 
 
 class TestFormat(unittest.TestCase):

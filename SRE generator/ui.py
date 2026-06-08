@@ -6,6 +6,7 @@ import streamlit as st
 
 import config
 from logic import SREInput, TenantQuery, generate_ticket, parse_image_tags
+from ui_monthly import render_monthly_fields
 
 _EMPTY_QUERY = {"", "none", "n/a", "-"}
 
@@ -125,12 +126,8 @@ def _render_query_sections(
     return mysql_all, mysql_specific, psql_all, psql_specific, mysql_backup_required, mysql_backup_tables
 
 
-def render() -> None:
-    st.title("SRE Generator")
-    st.caption("Generate ready-to-paste SRE/Jira ticket descriptions for patch deployments.")
-
-    sre_type = st.selectbox("SRE type", options=list(config.SRE_TYPES), key="sre_type")
-
+def _render_standard_form(sre_type: str) -> tuple[str, str, str]:
+    """Return (date_display, repo_text, msa_tags_text)."""
     is_production = sre_type in (config.SRE_TYPE_WEEKLY, config.SRE_TYPE_URGENT)
     is_uat = sre_type == config.SRE_TYPE_UAT
 
@@ -153,7 +150,7 @@ def render() -> None:
     st.subheader("Deployment options")
     opt1, opt2 = st.columns(2)
     with opt1:
-        cache_choice = st.selectbox(
+        st.selectbox(
             "Cache update required",
             options=["Use default", "yes", "no"],
             index=0,
@@ -161,36 +158,26 @@ def render() -> None:
             key="sre_cache_choice",
         )
     with opt2:
-        flush_choice = st.selectbox(
+        st.selectbox(
             "Flush MSA cache",
             options=["yes", "no"],
             index=0,
             key="sre_flush_choice",
         )
 
-    cache_update: bool | None
-    if cache_choice == "Use default":
-        cache_update = None
-    else:
-        cache_update = cache_choice == "yes"
-    flush_msa_cache = flush_choice == "yes"
-
     st.subheader("RPM versions (optional)")
     r1, r2, r3 = st.columns(3)
     with r1:
-        fcsky_rpm = st.text_input("FCSKY RPM version", key="sre_fcsky_rpm")
+        st.text_input("FCSKY RPM version", key="sre_fcsky_rpm")
     with r2:
-        basethreads_fcsky_rpm = st.text_input("BaseThreadsFCSKY RPM version", key="sre_basethreads_rpm")
+        st.text_input("BaseThreadsFCSKY RPM version", key="sre_basethreads_rpm")
     with r3:
-        tomcat_fcsky_rpm = st.text_input("tomcatFCSKY RPM version", key="sre_tomcat_rpm")
+        st.text_input("tomcatFCSKY RPM version", key="sre_tomcat_rpm")
 
-    hotfix_branch = ""
-    uat_branch = config.DEFAULT_UAT_BRANCH
     msa_tags_text = ""
-
     if is_production:
         st.subheader("Production details")
-        hotfix_branch = st.text_input(
+        st.text_input(
             "Hotfix branch",
             key="sre_hotfix_branch",
             placeholder="hotfix_r26q2.15",
@@ -204,7 +191,7 @@ def render() -> None:
 
     if is_uat:
         st.subheader("UAT details")
-        uat_branch = st.text_input(
+        st.text_input(
             "UAT branch",
             value=config.DEFAULT_UAT_BRANCH,
             key="sre_uat_branch",
@@ -214,6 +201,29 @@ def render() -> None:
             key="sre_uat_msa_tags",
             height=100,
         )
+
+    return date_display, repo_text, msa_tags_text
+
+
+def render() -> None:
+    st.title("SRE Generator")
+    st.caption("Generate ready-to-paste SRE/Jira ticket descriptions for patch deployments.")
+
+    sre_type = st.selectbox("SRE type", options=list(config.SRE_TYPES), key="sre_type")
+    is_monthly = sre_type == config.SRE_TYPE_MONTHLY
+    is_production = sre_type in (config.SRE_TYPE_WEEKLY, config.SRE_TYPE_URGENT)
+
+    monthly_fields = None
+    date_display = ""
+    repo_text = ""
+    msa_tags_text = ""
+
+    if is_monthly:
+        monthly_fields = render_monthly_fields()
+        date_display = monthly_fields.date_range_display
+        repo_text = st.session_state.get("sre_repos", "")
+    else:
+        date_display, repo_text, msa_tags_text = _render_standard_form(sre_type)
 
     (
         mysql_all,
@@ -225,36 +235,57 @@ def render() -> None:
     ) = _render_query_sections(sre_type)
 
     if st.button("Generate SRE ticket", type="primary", key="sre_generate"):
-        if not date_display.strip():
-            st.error(f"Enter a {date_label.lower()}.")
-            st.stop()
-        if not repo_text.strip():
-            st.error("Enter at least one repository.")
-            st.stop()
-        if is_production and not hotfix_branch.strip() and any(
-            marker in repo_text.lower()
-            for marker in ("fcsky-ui", "fcsky-static", "fcsky-internationalization", "serverless", "direct")
-        ):
-            st.warning("Direct sync repos are listed but hotfix branch is empty — direct sync section will be omitted.")
+        if is_monthly:
+            if not monthly_fields or not monthly_fields.date_range_display.strip():
+                st.error("Select all three processing days on the calendar.")
+                st.stop()
+        else:
+            date_label = "date range" if sre_type == config.SRE_TYPE_WEEKLY else "date"
+            if not date_display.strip():
+                st.error(f"Enter a {date_label}.")
+                st.stop()
+            if not repo_text.strip():
+                st.error("Enter at least one repository.")
+                st.stop()
+            if is_production and not st.session_state.get("sre_hotfix_branch", "").strip() and any(
+                marker in repo_text.lower()
+                for marker in ("fcsky-ui", "fcsky-static", "fcsky-internationalization", "serverless", "direct")
+            ):
+                st.warning(
+                    "Direct sync repos are listed but hotfix branch is empty — direct sync section will be omitted."
+                )
+
+        cache_choice = st.session_state.get("sre_cache_choice", "Use default")
+        cache_update: bool | None
+        if cache_choice == "Use default":
+            cache_update = None
+        else:
+            cache_update = cache_choice == "yes"
+        flush_msa_cache = st.session_state.get("sre_flush_choice", "yes") == "yes"
+
+        repo_lines = repo_text.splitlines() if repo_text.strip() else []
+        image_tag_source = msa_tags_text if msa_tags_text.strip() else repo_text
 
         payload = SREInput(
             sre_type=sre_type,
             date_display=date_display.strip(),
-            repo_lines=repo_text.splitlines(),
+            repo_lines=repo_lines,
             cache_update_required=cache_update,
             flush_msa_cache=flush_msa_cache,
-            hotfix_branch=hotfix_branch.strip(),
-            uat_branch=uat_branch.strip() or config.DEFAULT_UAT_BRANCH,
-            fcsky_rpm=fcsky_rpm.strip(),
-            basethreads_fcsky_rpm=basethreads_fcsky_rpm.strip(),
-            tomcat_fcsky_rpm=tomcat_fcsky_rpm.strip(),
-            msa_image_tags=parse_image_tags(msa_tags_text),
+            hotfix_branch=st.session_state.get("sre_hotfix_branch", "").strip(),
+            uat_branch=st.session_state.get("sre_uat_branch", config.DEFAULT_UAT_BRANCH).strip()
+            or config.DEFAULT_UAT_BRANCH,
+            fcsky_rpm=st.session_state.get("sre_fcsky_rpm", "").strip(),
+            basethreads_fcsky_rpm=st.session_state.get("sre_basethreads_rpm", "").strip(),
+            tomcat_fcsky_rpm=st.session_state.get("sre_tomcat_rpm", "").strip(),
+            msa_image_tags=parse_image_tags(image_tag_source),
             mysql_queries_all=mysql_all,
             mysql_queries_specific=mysql_specific,
             mysql_backup_required=mysql_backup_required,
             mysql_backup_tables=mysql_backup_tables,
             psql_queries_all=psql_all,
             psql_queries_specific=psql_specific,
+            monthly=monthly_fields,
         )
         ticket = generate_ticket(payload)
 

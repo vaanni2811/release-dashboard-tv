@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import config
+from monthly_template import MonthlyReleaseFields, build_monthly_description, monthly_title
 
 _DIRECT_SYNC_MARKERS = (
     "(direct sync)",
@@ -23,6 +24,7 @@ class RepoBucket(str, Enum):
     DIRECT_SYNC = "direct_sync"
     MSA = "msa"
     INTEGRATION = "integration"
+    SERVERLESS = "serverless"
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class ClassifiedRepos:
     direct_sync: tuple[str, ...]
     msa: tuple[str, ...]
     integration: tuple[str, ...]
+    serverless: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,7 @@ class SREInput:
     mysql_backup_tables: str = ""
     psql_queries_all: list[str] = field(default_factory=list)
     psql_queries_specific: list[TenantQuery] = field(default_factory=list)
+    monthly: MonthlyReleaseFields | None = None
 
 
 @dataclass(frozen=True)
@@ -105,7 +109,8 @@ def parse_repo_lines(lines: list[str]) -> list[tuple[str, bool]]:
             if not part or part.lower() in {"none", "n/a", "-"}:
                 continue
             raw, explicit = _strip_direct_sync_marker(part)
-            normalized = normalize_repo_name(raw)
+            repo_raw = raw.split(":", 1)[0].strip() if ":" in raw else raw
+            normalized = normalize_repo_name(repo_raw)
             if normalized and not is_excluded_repo(normalized):
                 entries.append((normalized, explicit))
     return entries
@@ -130,20 +135,39 @@ def parse_image_tags(text: str) -> dict[str, str]:
     return tags
 
 
-def classify_repo(name: str, explicit_direct_sync: bool = False) -> RepoBucket:
+def is_serverless_repo(name: str) -> bool:
+    """True for *-serverless repos and fcsky-auth-server (monthly serverless bucket)."""
+    return name.endswith("-serverless") or name in config.SERVERLESS_REPOS
+
+
+def classify_repo(
+    name: str,
+    explicit_direct_sync: bool = False,
+    *,
+    sre_type: str = "",
+) -> RepoBucket:
     if name == config.FCSKY_REPO:
         return RepoBucket.RPM
     if name in config.INTEGRATION_STAGE_REPOS:
         return RepoBucket.INTEGRATION
-    if explicit_direct_sync or name in config.DIRECT_SYNC_REPOS or name.endswith("-serverless"):
+
+    if sre_type == config.SRE_TYPE_MONTHLY:
+        if is_serverless_repo(name):
+            return RepoBucket.SERVERLESS
+        if explicit_direct_sync or name in config.DIRECT_SYNC_REPOS:
+            return RepoBucket.DIRECT_SYNC
+        return RepoBucket.MSA
+
+    if explicit_direct_sync or name in config.DIRECT_SYNC_REPOS or is_serverless_repo(name):
         return RepoBucket.DIRECT_SYNC
     return RepoBucket.MSA
 
 
-def classify_repos(entries: list[tuple[str, bool]]) -> ClassifiedRepos:
+def classify_repos(entries: list[tuple[str, bool]], sre_type: str = "") -> ClassifiedRepos:
     direct: list[str] = []
     msa: list[str] = []
     integration: list[str] = []
+    serverless: list[str] = []
     include_rpm = False
     seen: set[str] = set()
 
@@ -152,13 +176,18 @@ def classify_repos(entries: list[tuple[str, bool]]) -> ClassifiedRepos:
             continue
         seen.add(name)
 
-        bucket = classify_repo(name, explicit_direct_sync=explicit)
+        if sre_type == config.SRE_TYPE_MONTHLY and name in config.MONTHLY_FJS_REPOS:
+            continue
+
+        bucket = classify_repo(name, explicit_direct_sync=explicit, sre_type=sre_type)
         if bucket == RepoBucket.RPM:
             include_rpm = True
         elif bucket == RepoBucket.DIRECT_SYNC:
             direct.append(name)
         elif bucket == RepoBucket.INTEGRATION:
             integration.append(name)
+        elif bucket == RepoBucket.SERVERLESS:
+            serverless.append(name)
         else:
             msa.append(name)
 
@@ -167,6 +196,7 @@ def classify_repos(entries: list[tuple[str, bool]]) -> ClassifiedRepos:
         direct_sync=tuple(direct),
         msa=tuple(msa),
         integration=tuple(integration),
+        serverless=tuple(serverless),
     )
 
 
@@ -260,6 +290,42 @@ def _psql_specific_header(sre_type: str, tenant: str) -> str:
     if sre_type == config.SRE_TYPE_UAT:
         return f"Kindly execute below PSQL queries ONLY on {tenant}:"
     return f"Kindly execute below PSQL queries ONLY on {tenant}:"
+
+
+def _collect_mysql_blocks(data: SREInput) -> list[str]:
+    blocks: list[str] = []
+    mysql_all_hdr = _mysql_all_header(data.sre_type)
+    for queries in data.mysql_queries_all:
+        body = _mysql_query_body(queries, data)
+        block = _queries_block(mysql_all_hdr, body)
+        if block:
+            blocks.append(block)
+    for entry in data.mysql_queries_specific:
+        tenant = entry.tenant.strip()
+        if not tenant:
+            continue
+        body = _mysql_query_body(entry.queries, data)
+        block = _queries_block(_mysql_specific_header(data.sre_type, tenant), body)
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _collect_psql_blocks(data: SREInput) -> list[str]:
+    blocks: list[str] = []
+    psql_all_hdr = _psql_all_header(data.sre_type)
+    for queries in data.psql_queries_all:
+        block = _queries_block(psql_all_hdr, queries)
+        if block:
+            blocks.append(block)
+    for entry in data.psql_queries_specific:
+        tenant = entry.tenant.strip()
+        if not tenant:
+            continue
+        block = _queries_block(_psql_specific_header(data.sre_type, tenant), entry.queries)
+        if block:
+            blocks.append(block)
+    return blocks
 
 
 def _append_query_sections(parts: list[str], data: SREInput) -> None:
@@ -453,9 +519,31 @@ def _generate_uat(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
     return SRETicket(title=title, description="\n".join(parts).strip())
 
 
+def _generate_monthly(data: SREInput, classified: ClassifiedRepos) -> SRETicket:
+    if data.monthly is None:
+        raise ValueError("Monthly release fields are required for Monthly Release Ticket")
+
+    fields = data.monthly
+    title = monthly_title(fields)
+    tags = data.msa_image_tags or parse_image_tags("\n".join(data.repo_lines))
+    description = build_monthly_description(
+        fields,
+        fcsky_rpm=data.fcsky_rpm,
+        basethreads_rpm=data.basethreads_fcsky_rpm,
+        tomcat_rpm=data.tomcat_fcsky_rpm,
+        msa_lines=_format_image_lines(classified.msa, tags),
+        integration_lines=_format_image_lines(classified.integration, tags),
+        direct_sync_repos=classified.direct_sync,
+        serverless_repos=classified.serverless,
+        mysql_blocks=_collect_mysql_blocks(data),
+        psql_blocks=_collect_psql_blocks(data),
+    )
+    return SRETicket(title=title, description=description)
+
+
 def generate_ticket(data: SREInput) -> SRETicket:
     entries = parse_repo_lines(data.repo_lines)
-    classified = classify_repos(entries)
+    classified = classify_repos(entries, data.sre_type)
 
     if data.sre_type == config.SRE_TYPE_WEEKLY:
         return _generate_weekly(data, classified)
@@ -463,6 +551,8 @@ def generate_ticket(data: SREInput) -> SRETicket:
         return _generate_urgent(data, classified)
     if data.sre_type == config.SRE_TYPE_UAT:
         return _generate_uat(data, classified)
+    if data.sre_type == config.SRE_TYPE_MONTHLY:
+        return _generate_monthly(data, classified)
     raise ValueError(f"Unknown SRE type: {data.sre_type!r}")
 
 
